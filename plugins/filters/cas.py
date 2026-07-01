@@ -184,7 +184,7 @@ async def cas_auto_mod(client: Client, message: Message):
                 f"┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n"
                 f"┃      🛡️  <b>CAS ANTI-SPAM</b>       ┃\n"
                 f"┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n\n"
-                f"🚫 <b>User terdeteksi & di-ban otomatis!</b>\n\n"
+                f"🚫 <b>User terdeteksi &amp; di-ban otomatis!</b>\n\n"
                 f"👤 <b>User:</b> {message.from_user.mention}\n"
                 f"🆔 <b>ID:</b> <code>{uid}</code>\n\n"
                 f"⚠️ <b>Alasan:</b> Terdeteksi di database spammer global CAS.\n\n"

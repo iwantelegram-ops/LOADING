@@ -52,7 +52,15 @@ _VIOLATION_UBOT = VIOLATION_NEXUS_AI
 
 
 @Client.on_message(
-    (filters.group | filters.forum) & filters.text & ~filters.service,
+    # FIX: filter ini sebelumnya cocok ke SEMUA teks termasuk command
+    # ("/spam", "/delnexus", "/delkalimat", "/addregex", "/wlregex" di
+    # plugins/nexus/*.py — sama-sama group=0). Karena folder plugins/filters
+    # ke-load lebih dulu dari plugins/nexus (urutan alfabetis), handler ini
+    # selalu menang duluan untuk command2 tsb dan Pyrogram cuma jalanin SATU
+    # handler pertama yang match per group — command nexus jadi diam total
+    # tanpa log. Tambah ~filters.regex(r"^/") supaya command apa pun (bukan
+    # cuma yang disebut di atas) otomatis lewat ke handler aslinya.
+    (filters.group | filters.forum) & filters.text & ~filters.service & ~filters.regex(r"^/"),
     group=0
 )
 async def ubot_detect_filter(client: Client, message):
