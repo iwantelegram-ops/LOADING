@@ -60,6 +60,7 @@ VIOLATION_BAN_GAGAL          = "BAN_GAGAL"           # eksekusi ban gagal (izin 
 VIOLATION_WHITELIST_SPARED   = "WHITELIST_SPARED"    # match pola TAPI tidak dihapus (whitelist)
 VIOLATION_MUTE_SENYAP        = "MUTE_SENYAP"         # hapus senyap — user masih masa mute
 VIOLATION_BIO_ADMIN_WAJIB    = "BIO_ADMIN_WAJIB"     # admin di-unadmin (bio tidak sesuai syarat)
+VIOLATION_STICKER_BLACKLIST  = "STICKER_BLACKLIST"   # stiker dari pack yang masuk blokir global
 
 # Mic VC (Security OS) — tetap dipisah dari pelanggaran "pesan" di atas,
 # tapi pakai registry yang SAMA supaya konsisten lintas LOG_OS & panel.
@@ -92,6 +93,7 @@ VIOLATION_META: dict[str, tuple[str, str, str]] = {
     VIOLATION_WHITELIST_SPARED:   ("✅", "Tidak Dihapus (Whitelist)",         "pesan"),
     VIOLATION_MUTE_SENYAP:        ("🔕", "Hapus Senyap (Masa Mute Aktif)",    "pesan"),
     VIOLATION_BIO_ADMIN_WAJIB:    ("👮", "Admin Di-unadmin (Bio Tidak Sesuai)", "akun"),
+    VIOLATION_STICKER_BLACKLIST:  ("🧩", "Stiker Pack Diblokir Global",        "pesan"),
 
     VIOLATION_VC_MUTE_NON_MEMBER: ("🎙", "Mic Di-Mute — Bukan Anggota Grup",  "vc"),
     VIOLATION_VC_MUTE_PEER:       ("🎙", "Mic Di-Mute — Profil Belum Terverifikasi", "vc"),
