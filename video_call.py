@@ -453,8 +453,16 @@ _secos_followup_tasks: dict[int, asyncio.Task] = {}
 # Value: waktu monotonic saat join terakhir.
 _vc_join_last_ts: dict[int, float] = {}   # {chat_id: monotonic_time}
 _VC_JOIN_COOLDOWN      = 15.0      # detik — minimal jeda antar join ke VC yang sama
-_VC_SCHEDULED_INTERVAL = 30 * 60   # 30 menit — jeda antar siklus join per grup
+_VC_SCHEDULED_INTERVAL = 30 * 60   # 30 menit — total satu putaran patroli VC
 _VC_SCAN_DURATION      = 20        # detik stay di VC untuk scan peserta saat ini
+
+# ── Patroli berpola (lihat _vc_scheduled_loop) ───────────────────────────────
+# Jeda per-grup TIDAK lagi tetap — dihitung ulang tiap putaran:
+#   jeda = _VC_SCHEDULED_INTERVAL / jumlah_grup_aktif_vc
+# Grup yang baru aktif VC di tengah putaran TIDAK ikut diperiksa di putaran
+# berjalan — baru dimasukkan saat putaran berikutnya mulai (hitung ulang).
+_VC_PATROL_MIN_GAP   = _VC_WORKER_JOIN_DELAY  # lantai aman — worker tetap 8s antar join
+_VC_PATROL_IDLE_WAIT = 60.0                   # detik tidur jika tidak ada grup VC aktif
 
 # ── Cache admin grup per chat_id (TTL 5 menit) ──────────────────────────────
 _admin_cache: dict[int, tuple[set[int], float]] = {}   # {chat_id: (admin_ids, ts)}
@@ -484,6 +492,12 @@ _pending_checks: dict[tuple[int, int], int] = {}
 # ── Mapping call_id → chat_id untuk UpdateGroupCallParticipants ──────────────
 # Dideklarasikan di sini (global) agar _on_vc_update bisa mengaksesnya.
 _call_id_to_chat: dict[int, int] = {}
+
+# ── Lock anti-sweep-paralel untuk _resolve_chat_for_call_id ──────────────────
+# Mencegah beberapa event UpdateGroupCallParticipants dengan call_id sama-sama
+# belum dikenal memicu sweep GetFullChannel paralel ke semua grup sekaligus
+# (ini penyebab utama FloodWait beruntun/serentak, bukan jumlah partisipan VC).
+_resolving_call_ids: set[int] = set()
 
 # ── Mapping call_id → access_hash (wajib untuk InputGroupCall di raw API) ────
 # update.call di UpdateGroupCallParticipants hanya berisi .id (GroupCallReference),
@@ -1036,10 +1050,15 @@ async def stop_userbot() -> None:
 
 async def _log_registered_groups() -> None:
     """
-    Saat startup, log berapa grup Security OS yang sudah tersimpan di MongoDB,
-    lalu lakukan warm-up BERTAHAP (staggered) — resolve peer setiap grup dengan
-    jeda kecil agar userbot tidak memicu FloodWait karena mengakses
-    banyak grup sekaligus saat redeploy.
+    Saat startup, log berapa grup Security OS yang sudah tersimpan di MongoDB.
+
+    CATATAN PENTING — kenapa TIDAK ada resolve_peer loop di sini lagi:
+    Sebelumnya fungsi ini melakukan warm-up (resolve_peer per grup) SENDIRI,
+    lalu langsung disusul `_warmup_active_calls()` yang melakukan resolve_peer
+    + GetFullChannel per grup LAGI. Dua sweep penuh ke semua grup yang
+    nyaris bersamaan saat redeploy inilah yang menyebabkan FloodWait
+    bertubi-tubi. Sekarang hanya `_warmup_active_calls()` yang melakukan
+    pemanasan (single sweep, jeda lebih besar + jitter) — lihat fungsi tsb.
     """
     db, _, _ = _get_db()
     try:
@@ -1052,39 +1071,8 @@ async def _log_registered_groups() -> None:
     except Exception as e:
         print(f"[UB] ⚠️  Tidak bisa baca hitungan grup dari DB: {e}")
         return
-
-    # ── Warm-up bertahap: resolve peer setiap grup dengan jeda ───────────────
-    # Mencegah userbot "hadir" di banyak grup sekaligus saat redeploy,
-    # yang bisa memicu FloodWait atau deteksi anomali Telegram.
-    _STARTUP_STAGGER = 3.0   # detik jeda antar grup
-    try:
-        docs = await db["security_os"].find({}, {"chat_id": 1}).to_list(None)
-    except Exception:
-        return
-
-    if not docs:
-        return
-
-    print(f"[UB] ⏳ Startup stagger: warm-up {len(docs)} grup "
-          f"(jeda {_STARTUP_STAGGER}s per grup)...")
-    for i, doc in enumerate(docs):
-        if not userbot or not _ub_ready:
-            break
-        chat_id = doc.get("chat_id")
-        if not chat_id:
-            continue
-        try:
-            await userbot.resolve_peer(chat_id)
-        except FloodWait as fw:
-            print(f"[UB-Startup] FloodWait {fw.value}s saat resolve grup {chat_id} — menunggu...")
-            await asyncio.sleep(fw.value + 1)
-        except Exception:
-            pass   # Grup mungkin dihapus/userbot tidak ada — lewati
-        if i < len(docs) - 1:
-            await asyncio.sleep(_STARTUP_STAGGER)
-
-    print("[UB] ✅ Startup stagger selesai — userbot siap.")
-    # Join grup dilakukan oleh _vc_scheduled_loop setiap 30 menit
+    # Warm-up sesungguhnya (resolve_peer + GetFullChannel) dilakukan satu kali
+    # saja oleh _warmup_active_calls() di _voice_chat_monitor_loop().
 
 
 async def _voice_chat_monitor_loop() -> None:
@@ -1536,43 +1524,75 @@ async def _vc_scan_and_enforce(chat_id: int) -> None:
         pass   # Sudah dikick atau tidak di VC — tidak masalah
 
 
+async def _get_active_vc_chat_ids() -> list[int]:
+    """
+    Kembalikan daftar chat_id grup Security OS yang AKTIF (enabled=True) DAN
+    sedang punya voice chat berjalan (tercatat di _call_id_to_chat — diisi
+    oleh event UpdateGroupCall dan oleh _warmup_active_calls saat startup).
+
+    Ini dipakai untuk patroli berpola: hanya grup yang benar-benar lagi VC
+    yang dihitung untuk pembagian jeda 30 menit, bukan semua grup yang
+    Security OS-nya enabled.
+    """
+    db, _, _ = _get_db()
+    try:
+        docs = await db["security_os"].find({"enabled": True}, {"chat_id": 1}).to_list(None)
+    except Exception:
+        return []
+
+    enabled_ids = {doc.get("chat_id") for doc in docs if doc.get("chat_id")}
+    active_ids  = {cid for cid in _call_id_to_chat.values() if cid in enabled_ids}
+    return list(active_ids)
+
+
 async def _vc_scheduled_loop() -> None:
     """
-    Scheduler utama Security OS:
-    Setiap _VC_SCHEDULED_INTERVAL (30 menit), untuk tiap grup yang Security OS-nya aktif
-    → jalankan satu siklus _vc_scan_and_enforce.
+    Scheduler patroli VC — JEDA BERPOLA, bukan jeda tetap.
 
-    Stagger antar grup: 10 detik jeda untuk cegah FloodWait ke Telegram API.
-    Siklus pertama dimulai 60 detik setelah startup (beri waktu warmup selesai).
+    Cara kerja per putaran:
+      1. Hitung grup yang SEDANG aktif VC (Security OS enabled + ada call
+         berjalan) → N grup.
+      2. Jeda per-grup = _VC_SCHEDULED_INTERVAL (30 menit) / N, dengan lantai
+         aman _VC_PATROL_MIN_GAP (worker join tetap butuh ≥8 detik antar grup).
+      3. Antri tiap grup di daftar tsb satu-satu dengan jeda itu — total
+         durasi satu putaran ≈ 30 menit persis, terlepas dari berapa pun N.
+      4. Setelah putaran selesai, hitung ULANG N untuk putaran berikutnya.
+
+    Konsekuensi yang disengaja:
+      • Grup yang VC-nya BARU aktif di tengah putaran TIDAK ikut diperiksa
+        di putaran yang sedang berjalan (daftar putaran sudah dikunci di
+        awal) — baru ikut mulai putaran berikutnya saat dihitung ulang.
+      • Grup yang VC-nya berhenti di tengah putaran tetap diproses sampai
+        gilirannya (aman — scan tanpa VC aktif tidak melakukan apa-apa),
+        lalu otomatis hilang dari hitungan di putaran berikutnya.
     """
-    print("[UB-VC-Sched] ⏰ Scheduler join VC 30 menit aktif.")
+    print("[UB-VC-Sched] ⏰ Scheduler patroli VC berpola aktif "
+          f"(siklus {_VC_SCHEDULED_INTERVAL // 60} menit, dibagi rata per grup aktif VC).")
     await asyncio.sleep(60)   # beri waktu startup/warmup selesai
 
     while _ub_ready and userbot:
-        db, _, _ = _get_db()
-        try:
-            docs = await db["security_os"].find({"enabled": True}).to_list(None)
-        except Exception:
-            await asyncio.sleep(60)
+        active_ids = await _get_active_vc_chat_ids()
+
+        if not active_ids:
+            print(f"[UB-VC-Sched] Tidak ada grup dengan VC aktif — "
+                  f"tidur {_VC_PATROL_IDLE_WAIT:.0f} detik, cek ulang.")
+            await asyncio.sleep(_VC_PATROL_IDLE_WAIT)
             continue
 
-        if docs:
-            print(f"[UB-VC-Sched] Mulai siklus — {len(docs)} grup aktif → antri ke VC worker.")
-            for doc in docs:
-                if not userbot or not _ub_ready:
-                    break
-                chat_id = doc.get("chat_id")
-                if not chat_id:
-                    continue
-                # Antri ke worker — worker yang atur jeda antar grup, tidak parallel
-                _enqueue_vc_scan(chat_id)
-        else:
-            print("[UB-VC-Sched] Tidak ada grup aktif — tidur 60 detik.")
-            await asyncio.sleep(60)
-            continue
+        gap = max(_VC_SCHEDULED_INTERVAL / len(active_ids), _VC_PATROL_MIN_GAP)
+        print(
+            f"[UB-VC-Sched] Mulai putaran — {len(active_ids)} grup VC aktif → "
+            f"jeda {gap:.1f}s/grup (total putaran ≈{_VC_SCHEDULED_INTERVAL // 60} menit)."
+        )
 
-        print(f"[UB-VC-Sched] Tidur {_VC_SCHEDULED_INTERVAL // 60} menit hingga siklus berikutnya...")
-        await asyncio.sleep(_VC_SCHEDULED_INTERVAL)
+        for chat_id in active_ids:
+            if not userbot or not _ub_ready:
+                break
+            _enqueue_vc_scan(chat_id)
+            await asyncio.sleep(gap)
+
+        # Putaran selesai → loop ulang, active_ids dihitung ulang dari awal
+        # (grup baru aktif VC otomatis ikut mulai dari sini).
 
 
 
@@ -1585,47 +1605,93 @@ async def _resolve_chat_for_call_id(call_id: int) -> int | None:
     call.id dengan call_id yang sedang diproses. Sekali ketemu langsung
     return — hasil di-cache oleh caller ke _call_id_to_chat.
 
-    Tidak dipanggil sering: hanya saat terjadi cache-miss pada
-    _call_id_to_chat, jadi aman dari segi rate limit (di-throttle
-    dengan sleep kecil + FloodWait handling).
+    PENGAMAN:
+      1. Skip selama warmup startup belum selesai (_warmup_done masih False)
+         — warmup sendiri yang akan mengisi cache; tidak perlu sweep ganda
+         saat sistem baru saja redeploy dan trafik API masih padat.
+      2. Lock per call_id (_resolving_call_ids) — kalau beberapa event
+         UpdateGroupCallParticipants datang beruntun dengan call_id yang
+         sama-sama belum dikenal (lumrah terjadi tepat setelah join VC),
+         hanya SATU sweep yang jalan; event lain menunggu hasilnya alih-alih
+         memicu sweep paralel sendiri-sendiri (ini penyebab utama FloodWait
+         beruntun yang terlihat "serentak" di log).
+      3. Jeda antar grup 3.0 detik — nilai yang sudah terbukti aman di bawah
+         ambang limit channels.GetFullChannel pada akun ini (lihat catatan
+         REWARM_CHAT_DELAY di antigcast.py, yang juga 3.0s dan terbukti
+         FloodWait tidak terpicu sama sekali pada percobaan rewarm).
     """
     if not userbot:
         return None
-    db, _, _ = _get_db()
-    try:
-        docs = await db["security_os"].find({"enabled": True}).to_list(None)
-    except Exception:
+    if not _warmup_done:
+        # Warmup belum selesai → jangan sweep ganda, biar warmup yang isi cache.
         return None
 
-    from pyrogram.raw import functions as _rf
-    for doc in docs:
-        chat_id = doc.get("chat_id")
-        if not chat_id:
-            continue
-        try:
-            chat_peer = await userbot.resolve_peer(chat_id)
-            full = await userbot.invoke(_rf.channels.GetFullChannel(channel=chat_peer))
-            call_obj = getattr(full.full_chat, "call", None)
-            if call_obj and call_obj.id == call_id:
-                # BUG FIX: simpan access_hash dari fallback resolve juga
-                access_hash = getattr(call_obj, "access_hash", None)
-                if access_hash is not None:
-                    _call_id_to_access_hash[call_id] = access_hash
-                return chat_id
-        except FloodWait as fw:
-            await asyncio.sleep(fw.value + 1)
-        except Exception:
-            pass
-        await asyncio.sleep(0.5)
+    # ── Lock per call_id: cegah sweep paralel untuk call_id yang sama ───────
+    if call_id in _resolving_call_ids:
+        # Sweep untuk call_id ini sudah jalan di coroutine lain — tunggu
+        # sebentar lalu cek ulang cache (kemungkinan besar sudah terisi).
+        for _ in range(20):  # maks ~10 detik menunggu
+            await asyncio.sleep(0.5)
+            if call_id in _call_id_to_chat:
+                return _call_id_to_chat[call_id]
+            if call_id not in _resolving_call_ids:
+                break
+        return _call_id_to_chat.get(call_id)
 
-    return None
+    _resolving_call_ids.add(call_id)
+    try:
+        db, _, _ = _get_db()
+        try:
+            docs = await db["security_os"].find({"enabled": True}).to_list(None)
+        except Exception:
+            return None
+
+        from pyrogram.raw import functions as _rf
+        _RESOLVE_GAP = float(os.environ.get("VC_RESOLVE_GAP", 3.0))
+        for doc in docs:
+            chat_id = doc.get("chat_id")
+            if not chat_id:
+                continue
+            # Kalau cache sudah keisi oleh jalur lain (mis. UpdateGroupCall
+            # yang menyusul) sambil kita masih loop, berhenti lebih awal.
+            if call_id in _call_id_to_chat:
+                return _call_id_to_chat[call_id]
+            try:
+                chat_peer = await userbot.resolve_peer(chat_id)
+                full = await userbot.invoke(_rf.channels.GetFullChannel(channel=chat_peer))
+                call_obj = getattr(full.full_chat, "call", None)
+                if call_obj and call_obj.id == call_id:
+                    # BUG FIX: simpan access_hash dari fallback resolve juga
+                    access_hash = getattr(call_obj, "access_hash", None)
+                    if access_hash is not None:
+                        _call_id_to_access_hash[call_id] = access_hash
+                    return chat_id
+            except FloodWait as fw:
+                print(f"[UB-VC] FloodWait {fw.value}s saat fallback resolve grup {chat_id} — menunggu...")
+                await asyncio.sleep(fw.value + 1)
+            except Exception:
+                pass
+            await asyncio.sleep(_RESOLVE_GAP)
+
+        return None
+    finally:
+        _resolving_call_ids.discard(call_id)
+
+
+_warmup_done = False  # True setelah _warmup_active_calls selesai sekali jalan
 
 
 async def _warmup_active_calls() -> None:
     """
     Saat startup, cari grup Security OS aktif yang sudah punya voice chat
     berjalan dan isi _call_id_to_chat agar event pertama langsung dikenali.
+
+    Ini adalah SATU-SATUNYA sweep penuh ke semua grup saat startup/redeploy
+    (resolve_peer + GetFullChannel per grup). Jeda antar grup dibuat lebih
+    besar + jitter acak supaya pola request ke Telegram API tidak "rapi"
+    dan tidak membebani sekaligus → mencegah FloodWait beruntun saat redeploy.
     """
+    global _warmup_done
     if not userbot:
         return
     db, _, _ = _get_db()
@@ -1634,8 +1700,20 @@ async def _warmup_active_calls() -> None:
     except Exception:
         return
 
+    if not docs:
+        return
+
+    import random as _random
+    _WARMUP_STAGGER_BASE = 4.0    # detik jeda dasar antar grup
+    _WARMUP_STAGGER_JITTER = 2.0  # tambahan acak 0-2 detik agar polanya tidak tetap
+
+    print(f"[UB-VC] ⏳ Warm-up startup: {len(docs)} grup "
+          f"(jeda ~{_WARMUP_STAGGER_BASE}-{_WARMUP_STAGGER_BASE + _WARMUP_STAGGER_JITTER}s per grup)...")
+
     from pyrogram.raw import functions as _rf
-    for doc in docs:
+    for i, doc in enumerate(docs):
+        if not userbot or not _ub_ready:
+            break
         chat_id = doc.get("chat_id")
         if not chat_id:
             continue
@@ -1655,10 +1733,15 @@ async def _warmup_active_calls() -> None:
                     f"(call_id={call_obj.id}, access_hash={'✅' if access_hash else '⚠️ tidak ada'})"
                 )
         except FloodWait as fw:
+            print(f"[UB-VC] FloodWait {fw.value}s saat warmup grup {chat_id} — menunggu...")
             await asyncio.sleep(fw.value + 1)
         except Exception:
             pass
-        await asyncio.sleep(2)
+        if i < len(docs) - 1:
+            await asyncio.sleep(_WARMUP_STAGGER_BASE + _random.uniform(0, _WARMUP_STAGGER_JITTER))
+
+    _warmup_done = True
+    print("[UB-VC] ✅ Warm-up startup selesai — userbot siap.")
 
 
 async def _leave_vc_for_group_direct(chat_id: int) -> None:

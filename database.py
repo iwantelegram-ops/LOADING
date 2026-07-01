@@ -1945,8 +1945,14 @@ async def restore_group_moderation_if_forced(chat_id: int) -> bool:
     Return True jika grup ini di-restore, False jika tidak perlu (tidak
     pernah di-force-off oleh watchdog).
     """
-    cfg = await get_config(chat_id)
-    if not cfg.get("perm_forced_off"):
+    # PENTING: jangan pakai get_config() di sini — get_config() hanya
+    # menyalin field yang ada di DEFAULT_CONFIG, dan "perm_forced_off"
+    # SENGAJA tidak dimasukkan ke DEFAULT_CONFIG (bukan toggle fitur).
+    # Akibatnya cfg.get("perm_forced_off") selalu None/False meski nilai
+    # asli di DB True, sehingga fungsi ini selalu return False tanpa
+    # pernah benar-benar clear flag-nya. Baca langsung dari config_db.
+    doc = await config_db.find_one({"chat_id": chat_id})
+    if not doc or not doc.get("perm_forced_off"):
         return False
 
     await config_db.update_one(

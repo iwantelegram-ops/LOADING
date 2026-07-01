@@ -628,15 +628,47 @@ async def _setup_commands():
     try:
         await app.set_bot_commands(
             commands=[
+                # ── Admin grup ──────────────────────────────────────────────
+                BotCommand("antigcast", "panel kontrol lengkap ke dm"),
+                BotCommand("status", "cek status semua modul grup"),
+                BotCommand("setlocal", "toggle anti-spam lokal on/off"),
+                BotCommand("setglobal", "toggle anti-gcast global on/off"),
+                BotCommand("setbio", "toggle bio link detector on/off"),
+                BotCommand("setwaktu", "atur durasi memori spam (menit)"),
+                BotCommand("addgroupregex", "tambah filter kata khusus grup"),
+                BotCommand("delgroupregex", "hapus filter kata khusus grup"),
+                BotCommand("listgroupregex", "lihat filter kata khusus grup"),
+                BotCommand("wlcas", "whitelist user dari ban cas"),
+                BotCommand("unwlcas", "cabut whitelist cas"),
+                BotCommand("vip", "jadikan user member vip"),
+                BotCommand("unvip", "cabut status vip user"),
+                BotCommand("spam", "reply pesan spam, lapor ke nexus ai"),
+                BotCommand("ns_score", "leaderboard keaktifan newscore"),
+                # ── Member biasa ────────────────────────────────────────────
                 BotCommand("unmutemic", "hps/priv link bio dlu"),
-                BotCommand("antigcast", "anti spam cerdas abad ini"),
                 BotCommand("govip", "cara jadi vip member"),
+                BotCommand("reportsticker", "reply stiker, lapor pack spam"),
             ],
             scope=BotCommandScopeAllGroupChats(),
         )
         await app.set_bot_commands(
             commands=[
+                # ── Semua user ──────────────────────────────────────────────
                 BotCommand("start", "anti spam cerdas"),
+                BotCommand("batal", "batalkan proses input yang berjalan"),
+                # ── Owner bot ───────────────────────────────────────────────
+                BotCommand("addregex", "tambah filter kata global"),
+                BotCommand("delregex", "hapus filter kata global"),
+                BotCommand("wlregex", "tambah whitelist regex global"),
+                BotCommand("infobot", "lihat filter kata global aktif"),
+                BotCommand("delnexus", "hapus data dari database nexus ai"),
+                BotCommand("delkalimat", "hapus kalimat dari record data nexus"),
+                BotCommand("otp", "kirim kode otp login userbot"),
+                BotCommand("list", "lihat daftar semua grup terpasang"),
+                BotCommand("reset", "hapus semua data 1 namespace bot"),
+                BotCommand("cekstickerpack", "daftar stiker pack diblokir"),
+                BotCommand("cekreport", "daftar stiker pack dilaporkan"),
+                BotCommand("openstikerpack", "buka blokir 1 stiker pack"),
             ],
             scope=BotCommandScopeAllPrivateChats(),
         )
