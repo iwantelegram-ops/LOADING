@@ -66,11 +66,11 @@ async def cmd_reset(client: Client, message: Message):
         f"<code>CODE_BOT = {code_bot_safe}</code>\n\n"
         f"<b>Data yang akan dihapus secara permanen:</b>\n"
         f"  ◈ Pengaturan semua grup (local/global/bio/waktu)\n"
-        f"  ◈ Filter kata & regex per grup\n"
-        f"  ◈ Whitelist & VIP user\n"
+        f"  ◈ Filter kata &amp; regex per grup\n"
+        f"  ◈ Whitelist &amp; VIP user\n"
         f"  ◈ Database Nexus AI (kalimat + regex terlatih)\n"
-        f"  ◈ Log aktivitas & riwayat aksi\n"
-        f"  ◈ Cache pesan seen & mute tracking\n"
+        f"  ◈ Log aktivitas &amp; riwayat aksi\n"
+        f"  ◈ Cache pesan seen &amp; mute tracking\n"
         f"  ◈ Semua setting bot tersimpan\n\n"
         f"<b>Ini tidak bisa dibatalkan!</b>",
         reply_markup=keyboard,

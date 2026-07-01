@@ -233,7 +233,8 @@ async def govip_start_intercept(client: Client, message: Message):
         "5️⃣ Anti-GCast (broadcast massal lintas grup)\n"
         "6️⃣ CAS Global (auto-ban spammer terverifikasi)\n"
         "7️⃣ Nexus AI &amp; Filter Kata Otomatis\n"
-        "8️⃣ Mute Mic Otomatis (Security OS — Obrolan Suara)"
+        "8️⃣ Deteksi Ubot (kalimat berulang otomatis)\n"
+        "9️⃣ Mute Mic Otomatis (Security OS — Obrolan Suara)"
     )
 
     text = (

@@ -213,55 +213,35 @@ async def log_new_group(client: Client, message: Message):
             await _send_log(client, text)
 
 
-# ── LOG 2: /list — daftar semua grup ─────────────────────────────────────────
+# ── LOG 2: /list — daftar semua grup (tampilan sama dengan panel Nexus >
+#           Owner Bot > Grup Terdaftar, tanpa tombol kembali ke mainframe) ──
 @Client.on_message(filters.command("list") & filters.private & filters.user(OWNER_ID))
 async def list_grup_pengguna(client: Client, message: Message):
     msg = await message.reply("⏳ <i>Menarik data node grup dari server...</i>", parse_mode=ParseMode.HTML)
-    grup_list = []
-    grup_terhapus_count = 0
 
-    async for doc in config_db.find({}):
-        chat_id = doc.get("chat_id")
-        if not chat_id:
-            continue
-        try:
-            chat = await client.get_chat(chat_id)
-            username = f"@{chat.username}" if chat.username else "—"
-            grup_list.append(
-                f"◈ <b>{html.escape(chat.title)}</b>\n"
-                f"   └ ID: <code>{chat_id}</code> | Link: {html.escape(username)}"
-            )
-        except Exception:
-            await config_db.delete_one({"chat_id": chat_id})
-            grup_terhapus_count += 1
+    from plugins.nexus.nexus_handlers import build_grup_terdaftar_text
+    text = await build_grup_terdaftar_text(client)
 
-    if not grup_list:
-        text = "<b>❖ NODE INDEX ❖</b>\n\n📭 <b>Sistem tidak mendeteksi koneksi grup aktif.</b>"
-        if grup_terhapus_count:
-            text += f"\n\n♻️ <i>Garbage collection: <b>{grup_terhapus_count} node mati</b> dibersihkan.</i>"
-        await msg.edit(text, parse_mode=ParseMode.HTML)
+    # Sama seperti panel Nexus: bisa melebihi batas 4096 karakter Telegram
+    # kalau grup banyak — pecah per ~3900 karakter, potong di batas baris
+    # antar-grup ("\n\n") supaya 1 entri grup tidak terbelah di tengah.
+    if len(text) <= 3900:
+        await msg.edit(text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
         return
 
-    header = (
-        "<b>❖ NODE INDEX ❖</b>\n\n"
-        f"⚡ <b>Total Grup Dilindungi:</b> <code>{len(grup_list)}</code>\n"
-    )
-    if grup_terhapus_count:
-        header += f"♻️ <i>Garbage collection: <b>{grup_terhapus_count} node mati</b> dibersihkan.</i>\n"
-    header += "\n<b>▰▰▰ DAFTAR GRUP AKTIF ▰▰▰</b>\n\n"
-
-    chunks, current_chunk = [], header
-    for g in grup_list:
-        if len(current_chunk) + len(g) + 2 > 3900:
+    entries = text.split("\n\n")
+    chunks, current_chunk = [], ""
+    for entry in entries:
+        if current_chunk and len(current_chunk) + len(entry) + 2 > 3900:
             chunks.append(current_chunk)
-            current_chunk = "<b>📋 LANJUTAN DAFTAR GRUP:</b>\n\n"
-        current_chunk += g + "\n\n"
+            current_chunk = ""
+        current_chunk += (entry + "\n\n") if current_chunk == "" else entry + "\n\n"
     if current_chunk:
         chunks.append(current_chunk)
 
-    await msg.edit(chunks[0], parse_mode=ParseMode.HTML)
+    await msg.edit(chunks[0], parse_mode=ParseMode.HTML, disable_web_page_preview=True)
     for extra in chunks[1:]:
-        await message.reply(extra, parse_mode=ParseMode.HTML)
+        await message.reply(extra, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
 
 # ── LOG 3: Log alasan pesan dihapus (group=3) ────────────────────────────────

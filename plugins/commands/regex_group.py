@@ -110,7 +110,7 @@ async def add_group_regex(client: Client, message):
         f"✅ <b>Filter Khusus Grup Berhasil Tersimpan!</b>\n"
         f"◈ <b>Kata Kunci:</b> {kata_str}\n"
         f"◈ <b>Semantik:</b> Semua kata wajib ada sekaligus (AND)\n"
-        f"◈ <b>Mutasi:</b> Otomatis mendeteksi variasi huruf & leet\n\n"
+        f"◈ <b>Mutasi:</b> Otomatis mendeteksi variasi huruf &amp; leet\n\n"
         f"<i>Gunakan /listgroupregex untuk melihat semua filter aktif.</i>",
         parse_mode=ParseMode.HTML
     )

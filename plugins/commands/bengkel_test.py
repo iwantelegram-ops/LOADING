@@ -137,7 +137,7 @@ async def cmd_bleave(client: Client, message: Message):
 
     names = ", ".join(f"#{b.index}" for b in existing)
     msg = await message.reply(
-        f"⏳ Mengeluarkan Bengkel ({names}) dari grup ini & menghentikan "
+        f"⏳ Mengeluarkan Bengkel ({names}) dari grup ini &amp; menghentikan "
         f"mode kerja gabungan...",
         parse_mode=ParseMode.HTML,
     )

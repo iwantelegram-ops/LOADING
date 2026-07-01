@@ -31,7 +31,7 @@ async def group_settings_handler(client: Client, message):
         if len(message.command) < 2 or message.command[1].lower() not in ["on", "off"]:
             res = await message.reply("⚠️ Format salah. Contoh: <code>/setlocal on</code>", parse_mode=ParseMode.HTML)
             asyncio.create_task(auto_delete_reply([res, message], delay=DELAY_NOTIF))
-        return
+            return
         val = message.command[1].lower() == "on"
         await update_config(cid, "local", val)
         icon = "🟢" if val else "🔴"
@@ -42,7 +42,7 @@ async def group_settings_handler(client: Client, message):
         if len(message.command) < 2 or message.command[1].lower() not in ["on", "off"]:
             res = await message.reply("⚠️ Format salah. Contoh: <code>/setglobal on</code>", parse_mode=ParseMode.HTML)
             asyncio.create_task(auto_delete_reply([res, message], delay=DELAY_NOTIF))
-        return
+            return
         val = message.command[1].lower() == "on"
         await update_config(cid, "global", val)
         icon = "🟢" if val else "🔴"
@@ -53,7 +53,7 @@ async def group_settings_handler(client: Client, message):
         if len(message.command) < 2 or message.command[1].lower() not in ["on", "off"]:
             res = await message.reply("⚠️ Format salah. Contoh: <code>/setbio on</code>", parse_mode=ParseMode.HTML)
             asyncio.create_task(auto_delete_reply([res, message], delay=DELAY_NOTIF))
-        return
+            return
         val = message.command[1].lower() == "on"
         await update_config(cid, "bio_check", val)
         icon = "🟢" if val else "🔴"
@@ -64,7 +64,7 @@ async def group_settings_handler(client: Client, message):
         if len(message.command) < 2 or not message.command[1].isdigit():
             res = await message.reply("⚠️ Format salah. Contoh: <code>/setwaktu 15</code>", parse_mode=ParseMode.HTML)
             asyncio.create_task(auto_delete_reply([res, message], delay=DELAY_NOTIF))
-        return
+            return
         mnt = max(1, int(message.command[1]))
         await update_config(cid, "expiry", mnt * 60)
         res = await message.reply(f"⏱️ Durasi memori spam → <code>{mnt} menit</code>", parse_mode=ParseMode.HTML)

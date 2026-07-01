@@ -83,7 +83,16 @@ async def ns_track(client, message: Message):
     - Pengirim bukan admin/owner grup, KECUALI admin yang diangkat oleh
       bot ini melalui NewsCore periode sebelumnya (NS admin aktif)
     - Pesan bukan command
-    - Pesan TIDAK dihapus oleh worker spam (antispam/bio/cas)
+    - User TIDAK sedang terindikasi ubot (lihat core/ubot_detect.py)
+
+    CATATAN PERFORMA: tidak ada lagi jeda/double-check is_message_handled
+    di sini (versi lama menunggu 0.35 detik supaya antispam/bio/cas sempat
+    mark_message_handled lebih dulu). Sekarang murni real-time mengikuti
+    event pesan asli — lebih ringan karena tidak menengok status pesan yang
+    sama dua kali. Sebagai gantinya, akun yang sudah positif terindikasi
+    ubot (data ini TETAP terkumpul walau toggle ubot_detect mati — lihat
+    docstring core/ubot_detect.py) dikecualikan total dari skor NewsCore,
+    supaya hanya user asli yang bisa masuk leaderboard/jadi admin.
     """
     try:
         if not message.from_user or message.from_user.is_bot:
@@ -107,12 +116,19 @@ async def ns_track(client, message: Message):
             if user_id not in ns_admin_ids:
                 return
 
-        # Beri jeda kecil agar antispam/bio/cas sempat mark_message_handled
-        await asyncio.sleep(0.35)
-
-        # Jika sudah di-mark oleh worker penghapus → skip, tidak dihitung
-        from database import is_message_handled
-        if is_message_handled(chat_id, message.id):
+        # Cek status deteksi ubot — data ini terus terkumpul terlepas toggle
+        # ubot_detect ON/OFF (lihat core/ubot_detect.py), jadi bisa langsung
+        # dipakai sebagai gate di sini walau fitur deteksinya sendiri mati.
+        # User yang POSITIF terindikasi ubot dikecualikan total dari skor:
+        # - skornya dihapus (kalau ada sisa dari sebelum terdeteksi)
+        # - pesan ini TIDAK dihitung
+        # Begitu dia keluar dari status ubot, hanya pesan SETELAHNYA yang
+        # mulai dihitung lagi (mulai dari 0, karena skor lama sudah dihapus).
+        # Kalau dia masuk status ubot lagi nanti, skornya dihapus ulang.
+        from core.ubot_detect import get_user_sentence_summary
+        summary = await get_user_sentence_summary(chat_id, user_id)
+        if summary.get("terindikasi_ubot"):
+            await ns_remove_score(chat_id, user_id)
             return
 
         await ns_track_message(
