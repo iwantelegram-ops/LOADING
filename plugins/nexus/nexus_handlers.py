@@ -173,6 +173,80 @@ async def _safe_edit(msg, text: str, keyboard=None):
         print(f"[nexus safe_edit] {e}")
 
 
+async def build_grup_terdaftar_text(client) -> str:
+    """
+    Bangun teks "GRUP YANG MEMAKAI BOT" (dipakai panel Nexus > Owner Bot >
+    Grup Terdaftar, DAN perintah /list di DM owner — supaya keduanya selalu
+    tampil identik, satu sumber kebenaran).
+
+    HTML dipakai di sini (bukan Markdown seperti halaman Nexus lain) —
+    judul grup adalah teks BEBAS dari user, dan Markdown legacy Pyrogram
+    tidak mendukung backslash-escape (\\* tidak "dimakan" parser seperti
+    MarkdownV2 Bot API resmi). Akibatnya 1 karakter delimiter (* _ ` [)
+    di judul grup manapun bisa merusak parsing SEMUA baris setelahnya
+    (bold hilang, link gagal ter-render, dst — persis kasus yang pernah
+    terjadi). html.escape() menetralkan &, <, > secara aman dan total,
+    tidak ada delimiter HTML yang bisa "lolos" dari teks bebas.
+
+    SUMBER DATA: config_db (lewat get_all_groups_with_perm_status), BUKAN
+    nexus_grup_db — yang isinya hanya grup yang pernah trigger /spam
+    atau event member-update, sehingga tidak mewakili SEMUA grup yang
+    memakai bot. config_db juga otomatis tidak memuat grup yang sudah
+    mati/bot-dikick (dibersihkan oleh perm_watchdog), dan menyertakan
+    status izin ban/mute TERKINI per grup — supaya owner tidak melihat
+    grup tanpa izin ban seolah-olah berjalan normal.
+    """
+    grups = await get_all_groups_with_perm_status()
+    text  = "📂 <b>GRUP YANG MEMAKAI BOT:</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    stop_fallback_fetch = False  # set True kalau kena FloodWait — jangan fetch lagi di loop ini
+    if grups:
+        for idx, g in enumerate(grups, 1):
+            chat_id_g   = g["chat_id"]
+            judul       = _html_escape(g["title"])
+            username    = g.get("username")
+            invite_link = g.get("invite_link")
+
+            # Fallback: grup terdaftar SEBELUM field username/invite_link
+            # ada di DB (data lama, atau belum sempat dicek perm_watchdog
+            # siklus pertama) — coba ambil langsung dari Telegram sekali,
+            # lalu simpan supaya render berikutnya tidak perlu fetch ulang.
+            # Sumber utama tetap perm_watchdog (refresh_group_public_info)
+            # yang jalan berkala terlepas panel ini dibuka atau tidak.
+            if username is None and invite_link is None and not stop_fallback_fetch:
+                try:
+                    await refresh_group_public_info(client, chat_id_g)
+                    _refreshed = await get_config(chat_id_g)
+                    username    = _refreshed.get("username")
+                    invite_link = _refreshed.get("invite_link")
+                except Exception as _fc:
+                    if type(_fc).__name__ == "FloodWait":
+                        # Telegram rate-limit — stop fallback fetch untuk
+                        # sisa grup di loop ini, jangan sampai tombol
+                        # nge-hang menunggu FloodWait demi 1 list.
+                        stop_fallback_fetch = True
+                    # Grup tidak bisa diakses sekarang (privat-tanpa-akses,
+                    # FloodWait, dll) — tampilkan apa adanya untuk siklus ini.
+
+            text += f"<b>{idx}.</b> 👥 {judul}\n┗─ ID: <code>{chat_id_g}</code>\n"
+            if username:
+                uname_safe = _html_escape(username)
+                text += f'┗─ 🔗 <a href="https://t.me/{uname_safe}">t.me/{uname_safe}</a>\n'
+            elif invite_link:
+                text += f'┗─ 🔒 <a href="{_html_escape(invite_link)}">Link Undangan (privat)</a>\n'
+            else:
+                text += "┗─ 🔒 Grup privat (tanpa link undangan)\n"
+
+            # Status izin ban/mute — sumber: perm_watchdog (cek berkala).
+            # Tampil HANYA saat bermasalah, supaya daftar tidak penuh noise
+            # untuk grup yang memang normal.
+            if g.get("forced_off"):
+                text += "┗─ ⛔ <b>Izin Ban/Mute Hilang</b> — moderasi dipaksa OFF\n"
+            text += "\n"
+    else:
+        text += "<i>Belum ada grup yang terdaftar.</i>"
+    return text
+
+
 async def _safe_edit_html(msg, text: str, keyboard=None):
     """
     Sama seperti _safe_edit, tapi parse_mode=HTML.
@@ -1104,70 +1178,7 @@ async def nexus_callback_router(client: Client, cq: CallbackQuery):
         except Exception:
             pass
 
-        # HTML dipakai di sini (bukan Markdown seperti halaman Nexus lain) —
-        # judul grup adalah teks BEBAS dari user, dan Markdown legacy Pyrogram
-        # tidak mendukung backslash-escape (\* tidak "dimakan" parser seperti
-        # MarkdownV2 Bot API resmi). Akibatnya 1 karakter delimiter (* _ ` [)
-        # di judul grup manapun bisa merusak parsing SEMUA baris setelahnya
-        # (bold hilang, link gagal ter-render, dst — persis kasus yang pernah
-        # terjadi). html.escape() menetralkan &, <, > secara aman dan total,
-        # tidak ada delimiter HTML yang bisa "lolos" dari teks bebas.
-        #
-        # SUMBER DATA: config_db (lewat get_all_groups_with_perm_status), BUKAN
-        # nexus_grup_db — yang isinya hanya grup yang pernah trigger /spam
-        # atau event member-update, sehingga tidak mewakili SEMUA grup yang
-        # memakai bot. config_db juga otomatis tidak memuat grup yang sudah
-        # mati/bot-dikick (dibersihkan oleh perm_watchdog), dan menyertakan
-        # status izin ban/mute TERKINI per grup — supaya owner tidak melihat
-        # grup tanpa izin ban seolah-olah berjalan normal.
-        grups = await get_all_groups_with_perm_status()
-        text  = "📂 <b>GRUP YANG MEMAKAI BOT:</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        stop_fallback_fetch = False  # set True kalau kena FloodWait — jangan fetch lagi di loop ini
-        if grups:
-            for idx, g in enumerate(grups, 1):
-                chat_id_g   = g["chat_id"]
-                judul       = _html_escape(g["title"])
-                username    = g.get("username")
-                invite_link = g.get("invite_link")
-
-                # Fallback: grup terdaftar SEBELUM field username/invite_link
-                # ada di DB (data lama, atau belum sempat dicek perm_watchdog
-                # siklus pertama) — coba ambil langsung dari Telegram sekali,
-                # lalu simpan supaya render berikutnya tidak perlu fetch ulang.
-                # Sumber utama tetap perm_watchdog (refresh_group_public_info)
-                # yang jalan berkala terlepas panel ini dibuka atau tidak.
-                if username is None and invite_link is None and not stop_fallback_fetch:
-                    try:
-                        await refresh_group_public_info(client, chat_id_g)
-                        _refreshed = await get_config(chat_id_g)
-                        username    = _refreshed.get("username")
-                        invite_link = _refreshed.get("invite_link")
-                    except Exception as _fc:
-                        if type(_fc).__name__ == "FloodWait":
-                            # Telegram rate-limit — stop fallback fetch untuk
-                            # sisa grup di loop ini, jangan sampai tombol
-                            # nge-hang menunggu FloodWait demi 1 list.
-                            stop_fallback_fetch = True
-                        # Grup tidak bisa diakses sekarang (privat-tanpa-akses,
-                        # FloodWait, dll) — tampilkan apa adanya untuk siklus ini.
-
-                text += f"<b>{idx}.</b> 👥 {judul}\n┗─ ID: <code>{chat_id_g}</code>\n"
-                if username:
-                    uname_safe = _html_escape(username)
-                    text += f'┗─ 🔗 <a href="https://t.me/{uname_safe}">t.me/{uname_safe}</a>\n'
-                elif invite_link:
-                    text += f'┗─ 🔒 <a href="{_html_escape(invite_link)}">Link Undangan (privat)</a>\n'
-                else:
-                    text += "┗─ 🔒 Grup privat (tanpa link undangan)\n"
-
-                # Status izin ban/mute — sumber: perm_watchdog (cek berkala).
-                # Tampil HANYA saat bermasalah, supaya daftar tidak penuh noise
-                # untuk grup yang memang normal.
-                if g.get("forced_off"):
-                    text += "┗─ ⛔ <b>Izin Ban/Mute Hilang</b> — moderasi dipaksa OFF\n"
-                text += "\n"
-        else:
-            text += "<i>Belum ada grup yang terdaftar.</i>"
+        text = await build_grup_terdaftar_text(client)
         await _safe_edit_html(cq.message, text, _back_main())
 
     elif data == "nx_lihat_ai":

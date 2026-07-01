@@ -53,6 +53,8 @@ from database import (
     get_config,
     check_bot_permissions,
     is_admin,
+    force_disable_group_moderation,
+    restore_group_moderation_if_forced,
 )
 
 _free_col   = db["free_per_group"]
@@ -925,6 +927,54 @@ async def nexus_silent_filter(client: Client, message: Message):
 
 
 # ── Tracking bot masuk/keluar grup ────────────────────────────────────────────
+
+@Client.on_chat_member_updated(group=7)
+async def nexus_react_bot_perm_change(client: Client, update: ChatMemberUpdated):
+    """
+    Reaktif — bukan polling. Telegram mengirim ChatMemberUpdated SAAT ITU JUGA
+    saat privilege bot (atau status bot) di suatu grup berubah, termasuk saat
+    admin mencabut/mengembalikan izin hapus pesan / ban-mute. Payload update
+    ini SUDAH berisi privileges terbaru — tidak perlu panggil API apapun
+    (get_chat_member dll) untuk membacanya, jadi TIDAK ADA risiko FloodWait
+    di handler ini, walau triggernya ramai sekaligus (mis. demote massal).
+
+    Sebelumnya status "perm_forced_off" (dipakai panel "Grup Terdaftar")
+    HANYA di-update oleh perm_watchdog yang polling tiap 3600 detik (1 jam)
+    — owner bisa lihat status basi sampai 1 jam. Handler ini menutup gap itu:
+    begitu privilege berubah, perm_forced_off langsung disinkronkan ke DB
+    detik itu juga. perm_watchdog TETAP jalan sebagai fallback/safety-net
+    (mis. event ter-skip karena restart container) — tidak dihapus, tidak
+    diubah, cuma jadi cadangan, bukan satu-satunya sumber update lagi.
+
+    group=7 — sebelum nexus_tracking_grup (group=8) supaya status izin
+    tersinkron lebih dulu sebelum tracking masuk/keluar grup diproses.
+    """
+    try:
+        me = client.me
+        new_member = update.new_chat_member
+        if not new_member or not new_member.user or new_member.user.id != me.id:
+            return  # bukan update soal bot ini sendiri — abaikan
+
+        chat_id = update.chat.id
+        status  = new_member.status
+
+        if status in (ChatMemberStatus.BANNED, ChatMemberStatus.LEFT):
+            # Bot dikick/keluar — biarkan nexus_tracking_grup (group=8) yang
+            # urus penghapusan dari DB, di sini tidak perlu apa-apa lagi.
+            return
+
+        privs        = getattr(new_member, "privileges", None)
+        can_del      = bool(getattr(privs, "can_delete_messages",  False)) if privs else False
+        can_restrict = bool(getattr(privs, "can_restrict_members", False)) if privs else False
+        has_perms    = can_del and can_restrict
+
+        if not has_perms:
+            await force_disable_group_moderation(chat_id)
+        else:
+            await restore_group_moderation_if_forced(chat_id)
+    except Exception as e:
+        print(f"[nexus_react_bot_perm_change] {e}")
+
 
 @Client.on_chat_member_updated(group=8)
 async def nexus_tracking_grup(client: Client, update: ChatMemberUpdated):
