@@ -749,7 +749,7 @@ async def ensure_userbot_in_group_and_promote(
             )
             return False, log
 
-        log.append("✅ Userbot berhasil diundang & terkonfirmasi masuk grup.")
+        log.append("✅ Userbot berhasil diundang &amp; terkonfirmasi masuk grup.")
 
     # ── Langkah 2: pastikan userbot admin (manage_video_chats + invite_users) ─
     invalidate_ub_admin_cache(chat_id)
@@ -788,7 +788,7 @@ async def ensure_userbot_in_group_and_promote(
             )
             return False, log
 
-        log.append("✅ Userbot berhasil diadminkan & terkonfirmasi.")
+        log.append("✅ Userbot berhasil diadminkan &amp; terkonfirmasi.")
 
     # ── Langkah 3 (opsional): userbot invite bot pemantau ke grup ────────────
     if monitor_bot_id:
@@ -857,7 +857,7 @@ async def ensure_userbot_in_group_and_promote(
                 )
                 return True, log
 
-            log.append("✅ Bot pemantau berhasil diundang userbot & terkonfirmasi.")
+            log.append("✅ Bot pemantau berhasil diundang userbot &amp; terkonfirmasi.")
 
     return True, log
 
@@ -888,6 +888,12 @@ _pending_checks: dict[tuple[int, int], int] = {}
 # ── Mapping call_id → chat_id untuk UpdateGroupCallParticipants ──────────────
 # Dideklarasikan di sini (global) agar _on_vc_update bisa mengaksesnya.
 _call_id_to_chat: dict[int, int] = {}
+
+# ── Reverse index: chat_id → call_id ─────────────────────────────────────────
+# Dipakai oleh _vc_get_call_info dan _leave_vc_for_group_direct untuk lookup
+# O(1) tanpa harus iterasi seluruh _call_id_to_chat. Selalu dijaga sinkron
+# dengan _call_id_to_chat — update keduanya bersamaan di setiap titik tulis.
+_chat_to_call_id: dict[int, int] = {}
 
 # ── Mapping call_id → access_hash (wajib untuk InputGroupCall di raw API) ────
 # update.call di UpdateGroupCallParticipants hanya berisi .id (GroupCallReference),
@@ -1034,6 +1040,48 @@ def _get_db():
 import time as _time_mod
 _sec_os_cache: dict[int, tuple[dict, float]] = {}
 _SEC_OS_TTL = 30  # detik
+
+# ── Cache deteksi channel broadcast (bukan grup/supergroup) ──────────────────
+# Tujuan: skip channel dari semua proses VC (GetFullChannel, join VC, scan
+# peserta) — channel broadcast tidak punya voice chat untuk member sama
+# sekali, jadi memanggil GetFullChannel ke channel ini di setiap siklus VC
+# (warmup, scheduler 30 menit, fallback resolve) cuma buang-buang kuota API
+# dan memicu FloodWait/throttle ("Waiting for N seconds... GetFullChannel")
+# tanpa hasil apapun.
+#
+# Channel TETAP py dikenali sebagai peer (tidak di-skip dari _sec_os_get,
+# tidak dihapus dari DB, log/fitur lain selain VC tetap berjalan normal) —
+# yang di-skip HANYA bagian voice-chat-nya.
+#
+# Cache permanen (tidak ada TTL) karena tipe sebuah chat (channel vs
+# grup/supergroup) tidak pernah berubah sepanjang umur chat_id itu di
+# Telegram — sekali diketahui hasilnya, tidak perlu dicek ulang.
+_is_broadcast_cache: dict[int, bool] = {}
+
+
+async def _is_broadcast_channel(chat_id: int) -> bool:
+    """
+    True jika chat_id ini adalah channel broadcast (BUKAN grup/supergroup).
+    Dipanggil sebelum titik manapun yang akan invoke GetFullChannel untuk
+    keperluan voice chat — supaya channel langsung di-skip tanpa memicu
+    API call yang sia-sia.
+
+    Fail-safe: jika gagal resolve (error apapun), anggap BUKAN channel
+    (False) — supaya grup/supergroup yang sedang ada gangguan sementara
+    tidak ikut ter-skip secara permanen dari VC karena kesalahan deteksi.
+    """
+    if chat_id in _is_broadcast_cache:
+        return _is_broadcast_cache[chat_id]
+    if not userbot:
+        return False
+    try:
+        from pyrogram.enums import ChatType
+        chat = await userbot.get_chat(chat_id)
+        is_broadcast = chat.type == ChatType.CHANNEL
+    except Exception:
+        return False
+    _is_broadcast_cache[chat_id] = is_broadcast
+    return is_broadcast
 
 
 async def _sec_os_get(chat_id: int) -> dict:
@@ -1896,8 +1944,10 @@ async def _voice_chat_monitor_loop() -> None:
                     if isinstance(call_obj, GroupCallDiscarded):
                         disc_id = getattr(call_obj, "id", None)
                         if disc_id:
-                            _call_id_to_chat.pop(disc_id, None)
+                            gone_chat = _call_id_to_chat.pop(disc_id, None)
                             _call_id_to_access_hash.pop(disc_id, None)
+                            if gone_chat:
+                                _chat_to_call_id.pop(gone_chat, None)
                         return
 
                     # ── FILTER: skip live stream channel (bukan obrolan suara grup) ──
@@ -1921,6 +1971,7 @@ async def _voice_chat_monitor_loop() -> None:
                     if call_id:
                         # Simpan selalu — filter enabled dicek saat ada peserta join
                         _call_id_to_chat[call_id] = chat_id_neg
+                        _chat_to_call_id[chat_id_neg] = call_id
                         if access_hash is not None:
                             _call_id_to_access_hash[call_id] = access_hash
                         # Log semua VC yang terdeteksi (debug)
@@ -1963,6 +2014,7 @@ async def _voice_chat_monitor_loop() -> None:
             if not chat_id:
                 return
             _call_id_to_chat[call_id] = chat_id
+            _chat_to_call_id[chat_id] = call_id
             print(f"[UB-VC] Fallback resolve: call_id={call_id} → grup {chat_id}")
 
         sec_doc = await _sec_os_get(chat_id)
@@ -2062,16 +2114,13 @@ async def _voice_chat_monitor_loop() -> None:
                 )
             )
 
-    # Warmup: isi _call_id_to_chat dari grup Security OS yang sudah punya VC aktif
-    await _warmup_active_calls()
+    # Warmup _warmup_active_calls() dihapus — tidak perlu lagi.
+    # UpdateGroupCall sudah mengisi _call_id_to_chat + _call_id_to_access_hash
+    # secara event-driven setiap kali VC dimulai. Untuk VC yang sudah aktif
+    # sebelum bot start, scheduler (_vc_scheduled_loop) akan menemukannya
+    # di siklus pertama lewat _vc_get_call_info (cache → fallback GetFullChannel
+    # hanya jika miss) tanpa perlu burst GetFullChannel ke semua grup saat startup.
 
-    # Join VC yang sudah aktif saat startup/redeploy.
-    #
-    # KENAPA WAJIB JOIN SAAT STARTUP:
-    # UpdateGroupCallParticipants HANYA dikirim Telegram ke klien yang sudah
-    # berada di dalam VC. Jika VC sudah aktif sebelum bot start (dan tidak ada
-    # UpdateGroupCall baru yang diterima), userbot tidak akan pernah masuk VC
-    # kecuali join manual di sini.
     asyncio.ensure_future(_safe_task(_vc_scheduled_loop(), tag="vc-scheduled-loop"))
     print("[UB-VC] Scheduler join VC 30 menit dimulai.")
 
@@ -2138,11 +2187,31 @@ async def _vc_join_raw(chat_id: int, call_id: int, access_hash: int) -> bool:
 
 async def _vc_get_call_info(chat_id: int):
     """
-    Ambil (call_id, access_hash) dari GetFullChannel.
+    Ambil (call_id, access_hash) untuk VC aktif di grup ini.
+
+    STRATEGI (hemat API):
+    1. Cari di cache _call_id_to_chat + _call_id_to_access_hash yang
+       sudah diisi event-driven oleh UpdateGroupCall — nol API call.
+    2. Kalau cache miss (VC sudah aktif sebelum bot start dan belum ada
+       UpdateGroupCall sejak saat itu): baru panggil GetFullChannel sekali,
+       simpan hasilnya ke cache supaya pemanggilan berikutnya tidak perlu
+       API call lagi.
+
     Return (call_id, access_hash) atau (None, None) jika tidak ada VC aktif.
     """
     if not userbot:
         return None, None
+    if await _is_broadcast_channel(chat_id):
+        return None, None
+
+    # ── 1. Coba dari cache event-driven dulu — nol API call, O(1) ────────────
+    call_id = _chat_to_call_id.get(chat_id)
+    if call_id:
+        access_hash = _call_id_to_access_hash.get(call_id)
+        if access_hash:
+            return call_id, access_hash
+
+    # ── 2. Cache miss — fallback GetFullChannel sekali ───────────────────────
     from pyrogram.raw import functions as _rf
     try:
         chat_peer = await userbot.resolve_peer(chat_id)
@@ -2154,10 +2223,11 @@ async def _vc_get_call_info(chat_id: int):
         access_hash = getattr(call_obj, "access_hash", None)
         if access_hash:
             _call_id_to_chat[call_id]        = chat_id
+            _chat_to_call_id[chat_id]        = call_id
             _call_id_to_access_hash[call_id] = access_hash
         return call_id, access_hash
     except FloodWait as fw:
-        print(f"[UB-VC] FloodWait {fw.value}s saat GetFullChannel grup {chat_id}")
+        print(f"[UB-VC] FloodWait {fw.value}s saat GetFullChannel (cache miss) grup {chat_id}")
         await asyncio.sleep(fw.value + 1)
         return None, None
     except Exception as e:
@@ -2167,7 +2237,7 @@ async def _vc_get_call_info(chat_id: int):
         if _is_chat_invalid_error(e):
             await _handle_chat_invalid(chat_id, f"{type(e).__name__}: {e}")
             return None, None
-        print(f"[UB-VC] Gagal GetFullChannel grup {chat_id}: {e}")
+        print(f"[UB-VC] Gagal GetFullChannel (cache miss) grup {chat_id}: {e}")
         return None, None
 
 
@@ -2206,6 +2276,12 @@ async def _vc_scan_and_enforce_impl(chat_id: int) -> None:
     if not sec_doc.get("enabled"):
         return
     monitor_id = sec_doc.get("monitor_bot_id", 0)
+
+    # Skip channel broadcast paling awal — sebelum cek izin VC sekalipun,
+    # supaya tidak ada API call sia-sia apapun untuk channel (yang tidak
+    # mungkin punya voice chat untuk member).
+    if await _is_broadcast_channel(chat_id):
+        return
 
     # ── Cek izin userbot: HARUS punya can_manage_video_chats ──────────────────
     # Tanpa ini, mute mic di VC akan selalu gagal di Telegram. Skip grup ini
@@ -2304,127 +2380,135 @@ async def _vc_scan_and_enforce_impl(chat_id: int) -> None:
 
 async def _vc_scheduled_loop() -> None:
     """
-    Scheduler utama Security OS:
-    Setiap _VC_SCHEDULED_INTERVAL (30 menit), untuk tiap grup yang Security OS-nya aktif
-    → jalankan satu siklus _vc_scan_and_enforce.
+    Scheduler utama Security OS — versi "ronde rata" (bukan burst-queue lagi).
 
-    Stagger antar grup: 10 detik jeda untuk cegah FloodWait ke Telegram API.
-    Siklus pertama dimulai 60 detik setelah startup (beri waktu warmup selesai).
+    CARA KERJA BARU:
+      1. Setiap awal ronde, userbot ambil snapshot grup yang Security OS-nya
+         aktif SAAT ITU dari MongoDB. Ini juga otomatis menyelesaikan kasus
+         redeploy: userbot tidak punya state lama soal grup mana yang VC-nya
+         aktif — ronde baru selalu mulai dari data toggle Security OS terkini
+         di DB, bukan dari cache lama.
+      2. Total durasi ronde (_VC_SCHEDULED_INTERVAL, 30 menit) dibagi rata
+         dengan jumlah grup aktif pada snapshot itu.
+         Contoh: 30 menit : 5 grup aktif = jeda 6 menit per grup.
+      3. Grup dicek SATU PER SATU secara berurutan (tidak ada 2 grup yang
+         dicek bersamaan) — userbot cek status VC grup itu, lalu join VC
+         kalau VC aktif ("naik"). Kalau VC mati, userbot istirahat (skip,
+         tidak melakukan apa-apa) dan lanjut ke grup berikutnya sesuai
+         jadwal slotnya.
+      4. Grup yang baru mengaktifkan toggle Security OS di TENGAH ronde yang
+         sedang berjalan TIDAK ikut ronde ini — snapshot sudah dikunci di
+         awal ronde. Grup itu otomatis ikut di ronde berikutnya.
+      5. Begitu satu ronde selesai (semua grup snapshot sudah diproses),
+         tunggu sampai genap _VC_SCHEDULED_INTERVAL (30 menit) dari awal
+         ronde ini, lalu ULANGI dari langkah 2: ambil ulang snapshot grup
+         aktif terbaru dari DB dan hitung ulang pembagian waktunya.
+
+    Ini membuat beban API userbot jauh lebih ringan & rata sepanjang waktu,
+    dibanding sebelumnya yang men-dump semua grup ke antrean sekaligus
+    dengan jeda kecil flat (_VC_WORKER_JOIN_DELAY) antar grup.
     """
-    print("[UB-VC-Sched] ⏰ Scheduler join VC 30 menit aktif.")
+    print("[UB-VC-Sched] ⏰ Scheduler ronde 30 menit (versi rata) aktif.")
     await asyncio.sleep(60)   # beri waktu startup/warmup selesai
 
     while _ub_ready and userbot:
+        round_start = time.monotonic()
         db, _, _ = _get_db()
         try:
             docs = await db["security_os"].find({"enabled": True}).to_list(None)
-        except Exception:
+        except Exception as e:
+            print(f"[UB-VC-Sched] Gagal ambil daftar grup aktif dari DB: {e} — tidur 60 detik.")
             await asyncio.sleep(60)
             continue
 
-        if docs:
-            print(f"[UB-VC-Sched] Mulai siklus — {len(docs)} grup aktif → antri ke VC worker.")
-            for doc in docs:
-                if not userbot or not _ub_ready:
-                    break
-                chat_id = doc.get("chat_id")
-                if not chat_id:
-                    continue
-                # Antri ke worker — worker yang atur jeda antar grup, tidak parallel
-                _enqueue_vc_scan(chat_id)
-        else:
+        # ── 1 & 2. Snapshot grup aktif di awal ronde ─────────────────────────
+        # Grup yang toggle Security OS-nya diaktifkan SETELAH titik ini tidak
+        # akan masuk daftar — baru ikut di ronde berikutnya (poin 4 spek).
+        chat_ids: list[int] = []
+        for doc in docs:
+            chat_id = doc.get("chat_id")
+            if not chat_id:
+                continue
+            # Skip channel broadcast — tidak punya voice chat untuk member,
+            # GetFullChannel ke channel ini cuma buang kuota API tanpa hasil.
+            if await _is_broadcast_channel(chat_id):
+                continue
+            chat_ids.append(chat_id)
+
+        if not chat_ids:
             print("[UB-VC-Sched] Tidak ada grup aktif — tidur 60 detik.")
             await asyncio.sleep(60)
             continue
 
-        print(f"[UB-VC-Sched] Tidur {_VC_SCHEDULED_INTERVAL // 60} menit hingga siklus berikutnya...")
-        await asyncio.sleep(_VC_SCHEDULED_INTERVAL)
+        n = len(chat_ids)
+        slot_interval = _VC_SCHEDULED_INTERVAL / n
+        print(
+            f"[UB-VC-Sched] Ronde baru: {n} grup aktif → "
+            f"jeda antar grup {slot_interval:.1f}s (~{slot_interval / 60:.2f} menit)."
+        )
+
+        # ── 3. Proses satu per satu sesuai jadwal slot, tidak bersamaan ─────
+        for idx, chat_id in enumerate(chat_ids):
+            if not userbot or not _ub_ready:
+                break
+
+            slot_start = time.monotonic()
+            print(f"[UB-VC-Sched] [{idx + 1}/{n}] Giliran grup {chat_id} — cek status VC...")
+            try:
+                # _vc_scan_and_enforce sendiri yang menentukan: skip kalau
+                # tidak ada VC aktif ("bot istirahat"), atau join+scan kalau
+                # VC aktif ("naik"). Guard _vc_scanning_groups tetap berlaku
+                # agar tidak tumpang tindih dengan siklus lain untuk grup ini.
+                await _vc_scan_and_enforce(chat_id)
+            except Exception as e:
+                print(f"[UB-VC-Sched] Error saat proses grup {chat_id}: {e}")
+
+            # Tunggu sisa waktu slot sebelum lanjut ke grup berikutnya, supaya
+            # jarak antar pengecekan grup tetap konsisten meski durasi proses
+            # tiap grup berbeda-beda (mis. grup dengan VC aktif makan waktu
+            # lebih lama daripada grup yang VC-nya mati).
+            if idx < n - 1:
+                elapsed = time.monotonic() - slot_start
+                remaining = slot_interval - elapsed
+                if remaining > 0:
+                    await asyncio.sleep(remaining)
+
+        # ── 5. Tunggu sampai genap 30 menit, lalu ulangi dari langkah 2 ──────
+        elapsed_total = time.monotonic() - round_start
+        remaining_round = _VC_SCHEDULED_INTERVAL - elapsed_total
+        if remaining_round > 0:
+            print(
+                f"[UB-VC-Sched] Ronde selesai dalam {elapsed_total:.1f}s. "
+                f"Tunggu {remaining_round / 60:.2f} menit hingga ronde berikutnya."
+            )
+            await asyncio.sleep(remaining_round)
+        else:
+            print(
+                f"[UB-VC-Sched] Ronde memakan {elapsed_total:.1f}s (melebihi {_VC_SCHEDULED_INTERVAL}s) "
+                f"— lanjut ke ronde berikutnya segera."
+            )
 
 
 
 async def _resolve_chat_for_call_id(call_id: int) -> int | None:
     """
-    Fallback saat _call_id_to_chat tidak punya entri untuk call_id ini
-    (warmup gagal/terlewat, atau VC dimulai sebelum warmup selesai).
+    Fallback saat _call_id_to_chat tidak punya entri untuk call_id ini.
 
-    Iterasi grup Security OS aktif, GetFullChannel tiap grup, cocokkan
-    call.id dengan call_id yang sedang diproses. Sekali ketemu langsung
-    return — hasil di-cache oleh caller ke _call_id_to_chat.
-
-    Tidak dipanggil sering: hanya saat terjadi cache-miss pada
-    _call_id_to_chat, jadi aman dari segi rate limit (di-throttle
-    dengan sleep kecil + FloodWait handling).
+    Sebelumnya fungsi ini loop semua grup Security OS aktif dan panggil
+    GetFullChannel tiap grup — mahal dan sumber FloodWait. Sekarang
+    dikembalikan None langsung karena:
+    - UpdateGroupCall sudah mengisi _call_id_to_chat secara event-driven
+      setiap kali VC dimulai (baris ~1965).
+    - _vc_scan_and_enforce (scheduler) mengisi cache lagi saat join VC.
+    - Cache miss di sini artinya VC ini bukan dari grup Security OS yang
+      dikenal, atau VC dimulai sebelum bot start dan scheduler belum sempat
+      siklus pertamanya — dalam kondisi ini scheduler sendiri yang akan
+      menemukan VC tersebut di giliran slot berikutnya tanpa perlu fallback
+      GetFullChannel.
     """
-    if not userbot:
-        return None
-    db, _, _ = _get_db()
-    try:
-        docs = await db["security_os"].find({"enabled": True}).to_list(None)
-    except Exception:
-        return None
-
-    from pyrogram.raw import functions as _rf
-    for doc in docs:
-        chat_id = doc.get("chat_id")
-        if not chat_id:
-            continue
-        try:
-            chat_peer = await userbot.resolve_peer(chat_id)
-            full = await userbot.invoke(_rf.channels.GetFullChannel(channel=chat_peer))
-            call_obj = getattr(full.full_chat, "call", None)
-            if call_obj and call_obj.id == call_id:
-                # BUG FIX: simpan access_hash dari fallback resolve juga
-                access_hash = getattr(call_obj, "access_hash", None)
-                if access_hash is not None:
-                    _call_id_to_access_hash[call_id] = access_hash
-                return chat_id
-        except FloodWait as fw:
-            await asyncio.sleep(fw.value + 1)
-        except Exception:
-            pass
-        await asyncio.sleep(0.5)
-
     return None
 
 
-async def _warmup_active_calls() -> None:
-    """
-    Saat startup, cari grup Security OS aktif yang sudah punya voice chat
-    berjalan dan isi _call_id_to_chat agar event pertama langsung dikenali.
-    """
-    if not userbot:
-        return
-    db, _, _ = _get_db()
-    try:
-        docs = await db["security_os"].find({"enabled": True}).to_list(None)
-    except Exception:
-        return
-
-    from pyrogram.raw import functions as _rf
-    for doc in docs:
-        chat_id = doc.get("chat_id")
-        if not chat_id:
-            continue
-        try:
-            chat_peer = await userbot.resolve_peer(chat_id)
-            full = await userbot.invoke(_rf.channels.GetFullChannel(channel=chat_peer))
-            call_obj = getattr(full.full_chat, "call", None)
-            if call_obj:
-                _call_id_to_chat[call_obj.id] = chat_id
-                # BUG FIX: simpan access_hash dari GetFullChannel — ini sumber
-                # access_hash yang valid untuk InputGroupCall saat warmup.
-                access_hash = getattr(call_obj, "access_hash", None)
-                if access_hash is not None:
-                    _call_id_to_access_hash[call_obj.id] = access_hash
-                print(
-                    f"[UB-VC] Warmup: grup {chat_id} punya voice chat aktif "
-                    f"(call_id={call_obj.id}, access_hash={'✅' if access_hash else '⚠️ tidak ada'})"
-                )
-        except FloodWait as fw:
-            await asyncio.sleep(fw.value + 1)
-        except Exception:
-            pass
-        await asyncio.sleep(2)
 
 
 async def _leave_vc_for_group_direct(chat_id: int) -> None:
@@ -2434,7 +2518,10 @@ async def _leave_vc_for_group_direct(chat_id: int) -> None:
     Gunakan _enqueue_vc_leave(chat_id) untuk antri permintaan leave.
 
     Menggunakan phone.LeaveGroupCall (MTProto raw API).
-    Jika userbot tidak ada di VC, operasi ini aman (tidak error fatal).
+    call_id + access_hash diambil dari cache (_call_id_to_chat /
+    _call_id_to_access_hash) yang sudah diisi event-driven — tidak perlu
+    GetFullChannel lagi. Kalau cache miss berarti VC sudah mati / bot
+    tidak pernah join → skip leave tanpa error.
     """
     if not userbot or not _ub_ready:
         return
@@ -2442,41 +2529,21 @@ async def _leave_vc_for_group_direct(chat_id: int) -> None:
     from pyrogram.raw import functions as _rf
     from pyrogram.raw.types import InputGroupCall
 
-    try:
-        chat_peer = await userbot.resolve_peer(chat_id)
-        full = await userbot.invoke(_rf.channels.GetFullChannel(channel=chat_peer))
-        call_obj = getattr(full.full_chat, "call", None)
-        if not call_obj:
-            # Tidak ada VC aktif di grup — tidak perlu leave
-            print(f"[UB-VC-Leave] Grup {chat_id}: tidak ada VC aktif — skip leave.")
-            return
-        call_id     = call_obj.id
-        access_hash = getattr(call_obj, "access_hash", None)
-        if not access_hash:
-            print(f"[UB-VC-Leave] Grup {chat_id}: access_hash tidak tersedia — skip leave.")
-            return
-
-        # Dapatkan call_id dari mapping
-        _lv_call_id = None
-        for _cid, _chid in list(_call_id_to_chat.items()):
-            if _chid == chat_id:
-                _lv_call_id = _cid
-                break
-        if _lv_call_id:
-            from pyrogram.raw import functions as _rf_lv
-            from pyrogram.raw.types import InputGroupCall as _IPC_lv
-            _lv_ah = _call_id_to_access_hash.get(_lv_call_id)
-            if _lv_ah:
-                try:
-                    await userbot.invoke(
-                        _rf_lv.phone.LeaveGroupCall(
-                            call=_IPC_lv(id=_lv_call_id, access_hash=_lv_ah),
-                            source=0,
-                        )
-                    )
-                except Exception:
-                    pass
+    # Cari call_id untuk grup ini dari reverse index — O(1)
+    call_id_lv     = _chat_to_call_id.get(chat_id)
+    access_hash_lv = _call_id_to_access_hash.get(call_id_lv) if call_id_lv else None
+    if not access_hash_lv:
+        print(f"[UB-VC-Leave] Grup {chat_id}: access_hash tidak ada di cache — skip leave.")
         _ub_in_vc_groups.discard(chat_id)
+        return
+
+    try:
+        await userbot.invoke(
+            _rf.phone.LeaveGroupCall(
+                call=InputGroupCall(id=call_id_lv, access_hash=access_hash_lv),
+                source=0,
+            )
+        )
         print(f"[UB-VC-Leave] ✅ Userbot keluar dari VC grup {chat_id} (Security OS dinonaktifkan).")
     except FloodWait as fw:
         print(f"[UB-VC-Leave] FloodWait {fw.value}s saat leave VC grup {chat_id}.")
@@ -2487,6 +2554,8 @@ async def _leave_vc_for_group_direct(chat_id: int) -> None:
             print(f"[UB-VC-Leave] Grup {chat_id}: userbot memang tidak di VC — OK.")
         else:
             print(f"[UB-VC-Leave] Grup {chat_id}: error leave VC — {e}")
+    finally:
+        _ub_in_vc_groups.discard(chat_id)
 
 
 async def _join_vc_for_group_direct(chat_id: int) -> None:
@@ -3834,16 +3903,158 @@ async def change_userbot(
     )
 
 
+async def _apply_monitor_bot_branding(
+    chat_id: int,
+    token: str,
+    monitor_bot_id: int,
+    inviter_bot: _Client,
+) -> None:
+    """
+    Branding otomatis bot pemantau setelah proses generate/ganti bot berhasil.
+
+    Dipanggil SEKALI saja dari setup_monitor_bot() (baru atau ganti token) —
+    BUKAN dari _load_instances_from_db()/reload_monitor_instances() saat
+    startup/restart, supaya tidak rename ulang & boros kuota rate-limit
+    setMyName/setMyDescription Telegram tiap kali proses redeploy.
+
+    4 langkah, masing-masing best-effort & independen (1 langkah gagal
+    tidak menggagalkan langkah lain, semua dibungkus try/except sendiri):
+      1. Rename bot pemantau → "<nama grup> Assistant" (Bot API setMyName).
+      2. Set deskripsi panjang (setMyDescription) — info bahwa bot ini
+         adalah bot pemantau resmi milik grup tsb, mendukung @ai_anti_spam.
+      3. Set deskripsi singkat (setMyShortDescription).
+      4. (best-effort, opsional) Set foto profil bot pemantau = foto profil
+         grup saat ini. Bot HTTP API resmi TIDAK punya endpoint untuk set
+         foto profil bot — di sini dipakai method tingkat-tinggi Pyrogram
+         `set_profile_photo()` (raw photos.uploadProfilePhoto) lewat client
+         MonitorInstance yang login sebagai bot itu sendiri via bot_token.
+         Ini tetap berfungsi untuk akun bot di Telegram, tapi sifatnya
+         best-effort — kalau Telegram berubah perilaku di masa depan,
+         langkah ini gagal diam-diam (log saja) tanpa mengganggu rename
+         atau deskripsi yang sudah berhasil di atas.
+    """
+    import httpx
+
+    # ── 0. Ambil info grup (nama + foto) lewat bot utama (sudah pasti
+    #      member grup ini — admin baru saja interaksi dari panel grup) ──────
+    chat = None
+    group_title = "Grup"
+    try:
+        chat = await inviter_bot.get_chat(chat_id)
+        group_title = (chat.title or "Grup").strip()
+    except Exception as e:
+        print(f"[SecOS-Brand] ⚠️ Gagal ambil info grup {chat_id}: {e} — pakai nama default.")
+
+    api_base = f"https://api.telegram.org/bot{token}"
+
+    # ── 1. Rename bot pemantau → "<nama grup> Assistant" ─────────────────────
+    # Batas Bot API untuk setMyName: 64 karakter.
+    suffix = " Assistant"
+    new_name = f"{group_title}{suffix}"
+    if len(new_name) > 64:
+        new_name = f"{group_title[: 64 - len(suffix)].rstrip()}{suffix}"
+    try:
+        async with httpx.AsyncClient(timeout=10) as hc:
+            resp = await hc.post(f"{api_base}/setMyName", json={"name": new_name})
+            data = resp.json()
+        if data.get("ok"):
+            print(f"[SecOS-Brand] ✅ Nama bot pemantau grup {chat_id} → {new_name!r}")
+        else:
+            print(f"[SecOS-Brand] ⚠️ setMyName gagal: {data.get('description')}")
+    except Exception as e:
+        print(f"[SecOS-Brand] ⚠️ setMyName error: {e}")
+
+    # ── 2. Deskripsi panjang (tampil di halaman profil bot) ──────────────────
+    # Batas Bot API untuk setMyDescription: 512 karakter.
+    description = (
+        f"🤖 Bot pemantau resmi grup \"{group_title}\".\n\n"
+        "Bertugas memantau profil & bio anggota untuk membantu mendeteksi "
+        "spam dan link berbahaya, bekerja sama dengan @ai_anti_spam "
+        "sebagai bagian dari sistem Security OS grup ini.\n\n"
+        "Bot ini tidak melayani perintah dari user biasa — dikendalikan "
+        "sepenuhnya oleh admin grup lewat panel Security OS."
+    )[:512]
+    try:
+        async with httpx.AsyncClient(timeout=10) as hc:
+            resp = await hc.post(f"{api_base}/setMyDescription", json={"description": description})
+            data = resp.json()
+        if data.get("ok"):
+            print(f"[SecOS-Brand] ✅ Deskripsi bot pemantau grup {chat_id} diperbarui.")
+        else:
+            print(f"[SecOS-Brand] ⚠️ setMyDescription gagal: {data.get('description')}")
+    except Exception as e:
+        print(f"[SecOS-Brand] ⚠️ setMyDescription error: {e}")
+
+    # ── 3. Deskripsi singkat (tampil di header chat dengan bot) ──────────────
+    # Batas Bot API untuk setMyShortDescription: 120 karakter.
+    short_description = f"Bot pemantau grup {group_title} • Security OS"[:120]
+    try:
+        async with httpx.AsyncClient(timeout=10) as hc:
+            resp = await hc.post(
+                f"{api_base}/setMyShortDescription",
+                json={"short_description": short_description},
+            )
+            data = resp.json()
+        if data.get("ok"):
+            print(f"[SecOS-Brand] ✅ Short description bot pemantau grup {chat_id} diperbarui.")
+        else:
+            print(f"[SecOS-Brand] ⚠️ setMyShortDescription gagal: {data.get('description')}")
+    except Exception as e:
+        print(f"[SecOS-Brand] ⚠️ setMyShortDescription error: {e}")
+
+    # ── 4. Foto profil bot = foto profil grup (best-effort, opsional) ────────
+    if chat is None or not getattr(chat, "photo", None):
+        print(f"[SecOS-Brand] ℹ️ Grup {chat_id} tidak punya foto profil — skip set foto bot pemantau.")
+        return
+
+    tmp_path: str | None = None
+    try:
+        tmp_path = await inviter_bot.download_media(chat.photo.big_file_id)
+        if not tmp_path:
+            print(f"[SecOS-Brand] ⚠️ Gagal download foto grup {chat_id} — skip set foto bot pemantau.")
+            return
+
+        # MonitorInstance baru saja di-spawn sebagai task terpisah (lihat
+        # caller) — beri kesempatan client-nya selesai connect/login dulu
+        # sebelum dipakai set_profile_photo (maks tunggu ~10 detik).
+        from monitor_bot_reference import _active_instances
+
+        instance = None
+        for _ in range(10):
+            instance = _active_instances.get(chat_id)
+            if instance is not None and instance.client.is_connected:
+                break
+            await asyncio.sleep(1)
+
+        if instance is None or not instance.client.is_connected:
+            print(
+                f"[SecOS-Brand] ⚠️ MonitorInstance grup {chat_id} belum siap "
+                "dalam 10 detik — skip set foto profil bot pemantau."
+            )
+            return
+
+        await instance.client.set_profile_photo(photo=tmp_path)
+        print(f"[SecOS-Brand] ✅ Foto profil bot pemantau grup {chat_id} disamakan dengan foto grup.")
+    except Exception as e:
+        print(f"[SecOS-Brand] ⚠️ Gagal set foto profil bot pemantau (tidak fatal, fitur opsional): {e}")
+    finally:
+        if tmp_path:
+            try:
+                _Path(tmp_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+
+
 async def setup_monitor_bot(
     chat_id: int,
     token: str,
     inviter_bot: _Client,
 ) -> tuple[bool, str]:
     """
-    Validasi token bot pemantau dan simpan ke DB.
-    Bot pemantau TIDAK langsung di-join ke grup — admin menambahkannya manual.
-    Saat bot pemantau masuk ke grup, handler on_chat_member_updated akan
-    mengenalinya otomatis dari DB.
+    Validasi token bot pemantau dan simpan ke DB, lalu otomatis mengundang
+    userbot + bot pemantau ke grup (lihat ensure_userbot_in_group_and_promote
+    di bawah) — admin TIDAK perlu menambahkan siapa pun secara manual,
+    kecuali salah satu langkah otomatis gagal (lihat log hasil).
 
     Jika grup ini sudah punya bot pemantau LAMA (token berbeda),
     bot lama di-kick dulu dari grup sebelum yang baru disimpan.
@@ -3926,6 +4137,15 @@ async def setup_monitor_bot(
     except Exception as e_spawn:
         print(f"[SecOS] Gagal spawn MonitorInstance: {e_spawn}")
         # Tidak fatal — instance akan di-load ulang saat restart proses
+
+    # ── 3b. Branding otomatis bot pemantau (rename + deskripsi + foto) ───────
+    # HANYA dipanggil dari sini (proses generate/ganti bot), BUKAN dari
+    # _load_instances_from_db()/reload_monitor_instances() — supaya tidak
+    # rename ulang / kena rate limit Telegram setiap kali proses restart.
+    _safe_task(
+        _apply_monitor_bot_branding(chat_id, token, monitor_bot_id, inviter_bot),
+        tag=f"brand-monitor-{chat_id}",
+    )
 
     # ── 4. Otomatisasi penuh: userbot join+admin grup, lalu invite bot ───────
     #     pemantau — supaya admin grup tidak perlu kerja manual sama sekali.
