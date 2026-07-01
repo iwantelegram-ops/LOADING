@@ -15,6 +15,7 @@ PERUBAHAN (v2 — admin_session):
 import re
 import html
 import asyncio
+import contextlib
 from pyrogram import Client, filters
 from plugins.ui.request_peer_flow import show_perjanjian, send_request_peer_button, handle_request_peer_result, _pending_request_peer
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Message
@@ -79,6 +80,81 @@ async def safe_edit(msg, text: str, keyboard=None):
             print(f"[safe_edit] retry gagal: {e2}")
     except Exception as e:
         print(f"[safe_edit] {e}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Animasi loading "canggih" — HANYA kosmetik UI, tidak menyentuh logika data.
+#  Dipakai saat proses pengambilan data (mis. daftar grup) butuh delay lama,
+#  supaya user tahu bot sedang bekerja, bukan macet.
+# ─────────────────────────────────────────────────────────────────────────────
+_SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+_LOADING_STEPS = [
+    "Menghubungkan ke database...",
+    "Menyinkronkan status admin...",
+    "Memverifikasi izin bot di setiap grup...",
+    "Menyusun daftar grup...",
+]
+
+
+async def _run_loading_animation(msg, title: str):
+    """
+    Jalankan animasi spinner + progress bar palsu (fake progress) yang
+    diedit berulang pada `msg` sampai coroutine ini di-cancel oleh caller
+    (yaitu setelah data asli sudah siap).
+    """
+    bar_len = 12
+    frame_i = 0
+    step_i = 0
+    fill = 0
+    last_text = None
+    try:
+        while True:
+            spinner = _SPINNER_FRAMES[frame_i % len(_SPINNER_FRAMES)]
+            fill = (fill + 1) % (bar_len + 1)
+            bar = "▰" * fill + "▱" * (bar_len - fill)
+            pct = int((fill / bar_len) * 100)
+            step = _LOADING_STEPS[step_i % len(_LOADING_STEPS)]
+
+            text = (
+                f"<b>{title}</b>\n\n"
+                f"{spinner} <b>Memuat data grup...</b>\n"
+                f"<code>[{bar}] {pct:>3}%</code>\n\n"
+                f"<i>{step}</i>"
+            )
+
+            if text != last_text:
+                try:
+                    await msg.edit(text, parse_mode=ParseMode.HTML)
+                    last_text = text
+                except (MessageNotModified, MessageIdInvalid, BadRequest):
+                    pass
+                except FloodWait as fw:
+                    await asyncio.sleep(min(fw.value, 5))
+                except Exception as e:
+                    print(f"[_run_loading_animation] {e}")
+
+            frame_i += 1
+            if fill == 0:
+                step_i += 1
+            await asyncio.sleep(0.45)
+    except asyncio.CancelledError:
+        pass
+
+
+async def _with_loading_animation(msg, title: str, coro):
+    """
+    Jalankan `coro` (mis. query database) sambil menampilkan animasi loading
+    di `msg`. Animasi otomatis dihentikan begitu `coro` selesai — logika/hasil
+    dari `coro` sama sekali tidak diubah, murni dijalankan berdampingan.
+    """
+    anim_task = asyncio.create_task(_run_loading_animation(msg, title))
+    try:
+        result = await coro
+    finally:
+        anim_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await anim_task
+    return result
 
 
 async def _safe_cb(cb: CallbackQuery, coro):
@@ -328,7 +404,11 @@ async def cb_admin_menu(client, cb: CallbackQuery):
         await cb.answer("⏳ Menghubungkan ke database grup...")
     clear_all_fsm(cb.from_user.id)
     from database import get_my_admin_groups
-    groups = await get_my_admin_groups(client, cb.from_user.id)
+    groups = await _with_loading_animation(
+        cb.message,
+        "❖ ＤＡＦＴＡＲ ＧＲＵＰ ❖",
+        get_my_admin_groups(client, cb.from_user.id),
+    )
 
     if not groups:
         await safe_edit(

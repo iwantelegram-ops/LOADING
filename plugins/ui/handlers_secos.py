@@ -175,7 +175,7 @@ async def cb_secos_setmon(client: Client, cb: CallbackQuery):
         f"   ◈ Mengundang userbot ke grup (jika belum jadi member)\n"
         f"   ◈ Mengadminkan userbot dengan izin <code>Kelola Obrolan Video</code> + <code>Undang Pengguna</code>\n"
         f"   ◈ Mengundang bot pemantau ke grup lewat userbot\n\n"
-        f"   Jika salah satu langkah gagal (misal grup privat & userbot belum\n"
+        f"   Jika salah satu langkah gagal (misal grup privat &amp; userbot belum\n"
         f"   bisa diundang otomatis), kamu akan diberi instruksi manual yang\n"
         f"   presisi — hanya untuk langkah yang gagal.\n\n"
         f"◈ 1 bot pemantau hanya boleh dipakai di <b>1 grup</b>.\n"
@@ -282,7 +282,7 @@ async def handle_setmon_input(client: Client, message: Message):
         await client.edit_message_text(
             chat_id=message.chat.id,
             message_id=msg_id,
-            text="⏳ <b>Memvalidasi token & menyiapkan bot pemantau...</b>",
+            text="⏳ <b>Memvalidasi token &amp; menyiapkan bot pemantau...</b>",
             parse_mode=ParseMode.HTML,
         )
     except Exception:
@@ -487,7 +487,7 @@ async def handle_setuserbot_input(client: Client, message: Message):
             chat_id=message.chat.id,
             message_id=msg_id,
             text=(
-                "⏳ <b>Menghentikan userbot lama & memulai login userbot baru...</b>\n\n"
+                "⏳ <b>Menghentikan userbot lama &amp; memulai login userbot baru...</b>\n\n"
                 "Telegram akan mengirim OTP ke nomor tersebut.\n"
                 "Kirim kode via DM bot: <code>/otp &lt;kode&gt;</code>\n\n"
                 "<i>Tunggu hingga proses login selesai (maks 10 menit).</i>"

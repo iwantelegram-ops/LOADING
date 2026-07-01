@@ -30,7 +30,7 @@ group_regex_db = db["regex_per_group"]
 free_col       = db["free_per_group"]
 whitelist_col  = db["whitelist_per_group"]
 
-TOTAL_GUIDE_PAGES = 12
+TOTAL_GUIDE_PAGES = 13
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -125,13 +125,62 @@ async def page_start(client):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Panduan Multi-Halaman (9 Halaman · Next/Prev)
+#  Panduan Multi-Halaman (13 Halaman · Next/Prev)
+#  Halaman 1 = indeks semua perintah (grup + DM). Halaman 2-13 = detail fitur
+#  per modul (sebelumnya halaman 1-12, semua mundur 1 karena halaman indeks
+#  baru disisipkan di depan).
 # ─────────────────────────────────────────────────────────────────────────────
 
 _GUIDE_CONTENT = {
 
     1: (
         "📖 <b>PANDUAN GLOBAL SPAM</b>  <code>[1/{t}]</code>\n"
+        "<i>Daftar Semua Perintah</i>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "<b>🏠 PERINTAH DI GRUP</b>\n\n"
+        "<u>👮 Admin Grup:</u>\n"
+        "<code>/antigcast</code> — panel kontrol lengkap (kirim ke DM)\n"
+        "<code>/status</code> — ringkasan status semua modul\n"
+        "<code>/setlocal on|off</code> — toggle Anti-Spam Lokal\n"
+        "<code>/setglobal on|off</code> — toggle Anti-GCast Global\n"
+        "<code>/setbio on|off</code> — toggle Bio Link Detector\n"
+        "<code>/setwaktu [menit]</code> — atur durasi memori spam\n"
+        "<code>/addgroupregex [kata]</code> — tambah filter kata grup\n"
+        "<code>/delgroupregex [kata]</code> — hapus filter kata grup\n"
+        "<code>/listgroupregex</code> — lihat daftar filter kata grup\n"
+        "<code>/wlcas</code> +reply / <code>[ID]</code> — whitelist CAS\n"
+        "<code>/unwlcas</code> +reply / <code>[ID]</code> — cabut whitelist CAS\n"
+        "<code>/vip</code> +reply / <code>[ID]</code> — jadikan Member VIP\n"
+        "<code>/unvip</code> +reply / <code>[ID]</code> — cabut status VIP\n"
+        "<code>/spam</code> +reply — lapor pesan spam ke Nexus AI\n"
+        "<code>/ns_score</code> — leaderboard keaktifan NewsCore\n\n"
+        "<u>👤 Member Biasa:</u>\n"
+        "<code>/unmutemic</code> — minta cek ulang &amp; buka mute mic VC\n"
+        "<code>/govip</code> — info &amp; link untuk jadi VIP Member\n"
+        "<code>/reportsticker</code> +reply stiker — lapor stiker pack spam\n\n"
+        "<b>💬 PERINTAH DI DM BOT</b>\n\n"
+        "<u>👤 Semua User:</u>\n"
+        "<code>/start</code> — buka menu utama bot\n"
+        "<code>/batal</code> — batalkan proses input yang sedang berjalan\n\n"
+        "<u>🔧 Owner Bot:</u>\n"
+        "<code>/addregex [kata1|kata2]</code> — tambah filter kata GLOBAL\n"
+        "<code>/delregex [kata]</code> — hapus filter kata global\n"
+        "<code>/wlregex [kata1|kata2]</code> — tambah whitelist regex global\n"
+        "<code>/infobot</code> — lihat semua filter kata global aktif\n"
+        "<code>/delnexus [kalimat/pola]</code> — hapus data dari database Nexus AI\n"
+        "<code>/delkalimat [teks]</code> — hapus kalimat dari Record Data Nexus\n"
+        "<code>/otp [kode]</code> — kirim kode OTP login userbot\n"
+        "<code>/list</code> — lihat daftar semua grup terpasang bot\n"
+        "<code>/reset [code_bot]</code> — hapus semua data 1 namespace ⚠️\n"
+        "<code>/cekstickerpack</code> — daftar stiker pack yang diblokir\n"
+        "<code>/cekreport</code> — daftar stiker pack yang dilaporkan\n"
+        "<code>/openstikerpack [SET_NAME]</code> — buka blokir 1 stiker pack\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "<i>💡 Detail tiap fitur dibahas di halaman-halaman berikutnya.</i>"
+    ),
+
+    2: (
+        "📖 <b>PANDUAN GLOBAL SPAM</b>  <code>[2/{t}]</code>\n"
         "<i>Apa Itu Bot Ini?</i>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "Bot ini adalah <b>sistem keamanan otomatis</b> untuk grup Telegram.\n"
@@ -148,7 +197,9 @@ _GUIDE_CONTENT = {
         "🔍 <b>Bio Link Detector</b>\n"
         "   Filter user yang menyimpan link di profil bio mereka.\n\n"
         "🚫 <b>Anti Mention &amp; Anti Link</b>\n"
-        "   Hapus mention ke non-member dan link/URL di isi pesan.\n\n"
+        "   Hapus mention ke non-member dan link/URL di isi pesan.\n"
+        "   <i>(2 toggle terpisah di panel — Anti Link aktif default,\n"
+        "   Anti Mention perlu dinyalakan manual)</i>\n\n"
         "🕵️ <b>Deteksi Ubot</b>\n"
         "   Tangkap akun yang mengulang kalimat sama persis ≥3×.\n\n"
         "🤖 <b>Nexus AI Engine</b>\n"
@@ -163,9 +214,9 @@ _GUIDE_CONTENT = {
         "   Berlaku untuk SEMUA jenis spam, termasuk Deteksi Ubot."
     ),
 
-    2: (
-        "📖 <b>PANDUAN GLOBAL SPAM</b>  <code>[2/{t}]</code>\n"
-        "<i>Cara Pasang & Mulai</i>\n"
+    3: (
+        "📖 <b>PANDUAN GLOBAL SPAM</b>  <code>[3/{t}]</code>\n"
+        "<i>Cara Pasang &amp; Mulai</i>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "<b>✦ 4 LANGKAH AKTIVASI:</b>\n\n"
         "<b>① Tambah ke Grup</b>\n"
@@ -174,7 +225,7 @@ _GUIDE_CONTENT = {
         "<b>② Berikan Akses Admin</b>\n"
         "   Bot butuh 2 izin untuk bekerja optimal:\n"
         "   ◈ <code>Hapus Pesan</code> — agar bisa eksekusi spam\n"
-        "   ◈ <code>Batasi Anggota</code> — untuk mute otomatis & CAS auto-ban\n\n"
+        "   ◈ <code>Batasi Anggota</code> — untuk mute otomatis &amp; CAS auto-ban\n\n"
         "<b>③ Cek Status</b>\n"
         "   Ketik <code>/status</code> di grup untuk melihat semua modul.\n\n"
         "<b>④ Atur via Panel</b>\n"
@@ -185,8 +236,8 @@ _GUIDE_CONTENT = {
         "<i>Cek halaman berikut atau panel /antigcast untuk lihat status tiap modul.</i>"
     ),
 
-    3: (
-        "📖 <b>PANDUAN GLOBAL SPAM</b>  <code>[3/{t}]</code>\n"
+    4: (
+        "📖 <b>PANDUAN GLOBAL SPAM</b>  <code>[4/{t}]</code>\n"
         "<i>Perintah Pengaturan Grup</i>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<i>👮 Khusus Admin Grup · Ketik langsung di grup</i>\n\n"
@@ -205,11 +256,15 @@ _GUIDE_CONTENT = {
         "   Dashboard status semua modul di grup ini.\n\n"
         "<code>/antigcast</code>\n"
         "   Kirim panel kontrol lengkap ke DM kamu.\n"
-        "   <i>(Lebih canggih dari semua command di atas)</i>"
+        "   <i>(Lebih canggih dari semua command di atas)</i>\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "<b>💡 Catatan:</b> Anti Mention, Anti Link, CAS, VIP, Security OS,\n"
+        "dan NewsCore <b>tidak punya command toggle di grup</b> — semua diatur\n"
+        "lewat panel <code>/antigcast</code>."
     ),
 
-    4: (
-        "📖 <b>PANDUAN GLOBAL SPAM</b>  <code>[4/{t}]</code>\n"
+    5: (
+        "📖 <b>PANDUAN GLOBAL SPAM</b>  <code>[5/{t}]</code>\n"
         "<i>Perintah /spam — Fitur Inti Nexus AI</i>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<i>👮 Khusus Admin Grup</i>\n\n"
@@ -234,8 +289,8 @@ _GUIDE_CONTENT = {
         "<i>/spam tanpa reply tidak akan diproses.</i>"
     ),
 
-    5: (
-        "📖 <b>PANDUAN GLOBAL SPAM</b>  <code>[5/{t}]</code>\n"
+    6: (
+        "📖 <b>PANDUAN GLOBAL SPAM</b>  <code>[6/{t}]</code>\n"
         "<i>Filter Kata Khusus Grup</i>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<i>👮 Khusus Admin Grup</i>\n\n"
@@ -258,12 +313,12 @@ _GUIDE_CONTENT = {
         "<code>/addgroupregex promo | slot | link</code>\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>⚠️ Tanda | = AND, bukan OR.</b>\n"
-        "<i>Setiap kata diproses AI mutasi — variasi huruf & leet terdeteksi otomatis.</i>\n\n"
+        "<i>Setiap kata diproses AI mutasi — variasi huruf &amp; leet terdeteksi otomatis.</i>\n\n"
         "<i>💡 Kelola filter lebih mudah via panel DM: /antigcast</i>"
     ),
 
-    6: (
-        "📖 <b>PANDUAN GLOBAL SPAM</b>  <code>[6/{t}]</code>\n"
+    7: (
+        "📖 <b>PANDUAN GLOBAL SPAM</b>  <code>[7/{t}]</code>\n"
         "<i>CAS Protection — Anti-Spam Global</i>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "<b>✦ APA ITU CAS?</b>\n\n"
@@ -287,8 +342,8 @@ _GUIDE_CONTENT = {
         "<i>💡 Kelola whitelist CAS via panel DM: /antigcast → Grup → CAS</i>"
     ),
 
-    7: (
-        "📖 <b>PANDUAN GLOBAL SPAM</b>  <code>[7/{t}]</code>\n"
+    8: (
+        "📖 <b>PANDUAN GLOBAL SPAM</b>  <code>[8/{t}]</code>\n"
         "<i>Member VIP — Bypass Semua Filter</i>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<i>👮 Khusus Admin Grup</i>\n\n"
@@ -314,9 +369,9 @@ _GUIDE_CONTENT = {
         "<i>Tidak berlaku lintas grup.</i>"
     ),
 
-    8: (
-        "📖 <b>PANDUAN GLOBAL SPAM</b>  <code>[8/{t}]</code>\n"
-        "<i>Nexus AI Panel & Perintah Owner</i>\n"
+    9: (
+        "📖 <b>PANDUAN GLOBAL SPAM</b>  <code>[9/{t}]</code>\n"
+        "<i>Nexus AI Panel &amp; Perintah Owner</i>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "<b>✦ NEXUS AI — UNTUK SEMUA USER:</b>\n\n"
         "Panel Nexus AI dapat diakses langsung dari\n"
@@ -338,8 +393,8 @@ _GUIDE_CONTENT = {
         "laporan /spam dan merakit pola pertahanan baru otomatis."
     ),
 
-    9: (
-        "📖 <b>PANDUAN GLOBAL SPAM</b>  <code>[9/{t}]</code>\n"
+    10: (
+        "📖 <b>PANDUAN GLOBAL SPAM</b>  <code>[10/{t}]</code>\n"
         "🔇 <i>Sistem Mute Eskalasi — Hukuman Spam Otomatis</i>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "<b>✦ APA ITU SISTEM MUTE ESKALASI?</b>\n\n"
@@ -373,8 +428,8 @@ _GUIDE_CONTENT = {
         "<i>agar sistem mute bekerja optimal.</i>"
     ),
 
-    10: (
-        "📖 <b>PANDUAN GLOBAL SPAM</b>  <code>[10/{t}]</code>\n"
+    11: (
+        "📖 <b>PANDUAN GLOBAL SPAM</b>  <code>[11/{t}]</code>\n"
         "🔐 <i>Security OS — Pantau Voice Chat Otomatis</i>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "<b>✦ APA ITU SECURITY OS?</b>\n\n"
@@ -384,30 +439,47 @@ _GUIDE_CONTENT = {
         "◈ User <b>non-member</b> naik ke VC → mic <b>di-mute otomatis</b>\n"
         "◈ Bio mengandung link → mic <b>di-mute otomatis</b> + peringatan\n"
         "◈ Pemantauan berjalan 24/7 selama ada aktivitas voice chat\n\n"
-        "<b>✦ 3 SYARAT AKTIVASI:</b>\n\n"
-        "① <b>Userbot</b> — akun Telegram biasa (bukan bot) sebagai 'mata' di VC\n"
-        "   Set <code>USERBOT_PHONE</code> di .env, login via OTP saat pertama kali\n\n"
-        "② <b>Bot Pemantau</b> — bot token terpisah untuk cek bio profil user\n"
-        "   Buat via @BotFather, pasang melalui panel Security OS tiap grup\n\n"
-        "③ <b>Bot Pemantau di Grup</b> — tambahkan manual ke grup, jadikan admin\n\n"
+        "<b>✦ 2 KOMPONEN YANG DIPAKAI:</b>\n\n"
+        "① <b>Userbot</b> — akun Telegram biasa (bukan bot) sebagai 'mata' di VC.\n"
+        "   Diset SEKALI oleh pemilik bot lewat <code>USERBOT_PHONE</code> di .env\n"
+        "   (login via OTP saat pertama kali) — berlaku untuk SEMUA grup,\n"
+        "   bukan per-grup.\n\n"
+        "② <b>Bot Pemantau</b> — bot token terpisah (1 per grup) untuk cek\n"
+        "   bio profil user. Dibuat &amp; dipasang sendiri oleh admin grup\n"
+        "   lewat panel — lihat langkah di bawah.\n\n"
+        "<b>✦ CARA PASANG (dari panel grup):</b>\n\n"
+        "<code>/antigcast</code> → pilih grup → <b>🔐 Security OS</b> →\n"
+        "<b>🤖 Pasang Bot Pemantau</b>\n\n"
+        "<b>①</b> Buat bot baru via @BotFather (<code>/newbot</code>), salin tokennya.\n"
+        "<b>②</b> Kirim token itu ke panel (chat DM dengan bot ini).\n"
+        "<b>③</b> Selesai — sisanya otomatis:\n"
+        "   ◈ Userbot diundang &amp; diadminkan ke grup (jika belum)\n"
+        "   ◈ Bot pemantau diundang ke grup lewat userbot sebagai member biasa\n"
+        "     <i>(bot pemantau TIDAK perlu jadi admin — cukup member)</i>\n\n"
+        "Kalau salah satu langkah otomatis gagal (grup privat, izin kurang,\n"
+        "dll), panel akan menunjukkan PERSIS langkah mana yang gagal beserta\n"
+        "instruksi manual untuk langkah itu saja — bukan harus mengulang semua\n"
+        "dari awal.\n\n"
         "<b>✦ KONFIGURASI .env TERKAIT:</b>\n\n"
-        "<code>USERBOT_PHONE</code>          — nomor HP akun userbot\n"
-        "<code>BOT_TOKEN_MONITOR</code>      — token bot pemantau (berbeda dari BOT_TOKEN)\n"
+        "<code>USERBOT_PHONE</code>          — nomor HP akun userbot (wajib, 1x setup)\n"
         "<code>LOG_OS</code>                 — channel log khusus aktivitas Security OS\n"
-        "<code>SCAN_INTERVAL_MINUTES</code>  — interval scan bio (default: 30 menit)\n"
-        "<code>BIO_RECHECK_SECS</code>       — jeda re-check bio user sama (default: 10 menit)\n"
-        "<code>BIO_TTL_SECS</code>           — TTL data bio di database (default: 5 menit)\n\n"
+        "<code>BIO_TTL_SECS</code>           — TTL data bio di database (default: 5 menit)\n"
+        "<code>BIO_RECHECK_SECS</code>       — jeda re-check bio user sama (default: ikut BIO_TTL_SECS)\n\n"
+        "<i>Token bot pemantau TIDAK diisi lewat .env — selalu lewat panel\n"
+        "di atas, supaya tiap grup bisa punya bot pemantau sendiri tanpa\n"
+        "perlu redeploy.</i>\n\n"
         "<b>✦ CATATAN PENTING:</b>\n"
         "◈ 1 bot pemantau hanya untuk <b>1 grup</b>\n"
-        "◈ Userbot tidak perlu jadi admin di grup (kecuali untuk mute mic di VC)\n"
+        "◈ Userbot admin di grup hanya untuk hak <code>Kelola Obrolan Video</code>\n"
+        "   + <code>Undang Pengguna</code> — bukan untuk hapus pesan/ban\n"
         "◈ Jika user mempriv bio → bot pemantau tidak lihat link → tidak di-mute\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>💡 Tip:</b> Tekan tombol <b>📖 Panduan Install</b> di panel Security OS\n"
         "<i>untuk panduan lengkap instalasi &amp; setup userbot.</i>"
     ),
 
-    11: (
-        "📖 <b>PANDUAN GLOBAL SPAM</b>  <code>[11/{t}]</code>\n"
+    12: (
+        "📖 <b>PANDUAN GLOBAL SPAM</b>  <code>[12/{t}]</code>\n"
         "🕵️ <i>Deteksi Ubot — Tangkap Akun Bot Berulang</i>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "<b>✦ APA ITU DETEKSI UBOT?</b>\n\n"
@@ -440,12 +512,12 @@ _GUIDE_CONTENT = {
         "<i>pemantauan fitur ini.</i>"
     ),
 
-    12: (
-        "📖 <b>PANDUAN GLOBAL SPAM</b>  <code>[12/{t}]</code>\n"
+    13: (
+        "📖 <b>PANDUAN GLOBAL SPAM</b>  <code>[13/{t}]</code>\n"
         "🏆 <i>NewsCore — Skor Keaktifan &amp; Admin Otomatis</i>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "<b>✦ APA ITU NEWSCORE?</b>\n\n"
-        "NewsCore memantau <b>keaktifan member</b> (jumlah & kualitas chat)\n"
+        "NewsCore memantau <b>keaktifan member</b> (jumlah &amp; kualitas chat)\n"
         "di grup, lalu otomatis mengangkat member <b>paling aktif</b> jadi\n"
         "admin — tanpa kamu perlu pilih manual satu-satu.\n\n"
         "<b>✦ CARA KERJA:</b>\n\n"
@@ -543,7 +615,7 @@ async def page_manage(chat_id: int):
         f"{icon('local')} <b>Anti-Spam Lokal</b>  —  <code>{flag('local')}</code>\n"
         f"<i>   Hapus pesan duplikat berulang dari 1 user.</i>\n\n"
         f"{icon('global')} <b>Anti-GCast Global</b>  —  <code>{flag('global')}</code>\n"
-        f"<i>   Deteksi & hapus pesan broadcast lintas grup.</i>\n\n"
+        f"<i>   Deteksi &amp; hapus pesan broadcast lintas grup.</i>\n\n"
         f"{icon('bio_check')} <b>Bio Link Detector</b>  —  <code>{flag('bio_check')}</code>\n"
         f"<i>   Filter user yang menyimpan link di bio profil.</i>\n\n"
         f"{icon('anti_mention')} <b>Anti Mention Non-Member</b>  —  <code>{flag('anti_mention')}</code>\n"
@@ -565,7 +637,7 @@ async def page_manage(chat_id: int):
         f"{ns_icon} <b>NewsCore</b>  —  <code>{ns_flag}</code>\n"
         f"<i>   Angkat admin otomatis dari member teraktif secara berkala.</i>\n\n"
         f"{ai_icon} <b>Anti Spam AI</b>  —  <code>{ai_flag}</code>\n"
-        f"<i>   Aktifkan Nexus AI murni & regex otomatis untuk mendeteksi spam di grup ini.</i>\n\n"
+        f"<i>   Aktifkan Nexus AI murni &amp; regex otomatis untuk mendeteksi spam di grup ini.</i>\n\n"
         f"{ubot_icon} <b>Deteksi Ubot</b>  —  <code>{ubot_flag}</code>\n"
         f"<i>   Hapus pesan user yang ketahuan kirim kalimat sama berulang ≥3×\n"
         f"   (ciri khas bot spam/userbot otomatis).</i>\n\n"
@@ -806,7 +878,7 @@ async def page_regex_tutorial(chat_id: int):
         f"<code>Grup: {chat_id}</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"Blokir pesan yang mengandung kombinasi kata tertentu.\n"
-        f"Setiap kata diproses AI mutasi — mendeteksi variasi huruf & leetspeak otomatis.\n\n"
+        f"Setiap kata diproses AI mutasi — mendeteksi variasi huruf &amp; leetspeak otomatis.\n\n"
         f"<b>✦ FORMAT INPUT:</b>\n\n"
         f"Pisahkan kata dengan <code> | </code> (tanda pipa)\n"
         f"Semua kata <b>HARUS hadir sekaligus</b> dalam satu pesan\n\n"
@@ -1273,7 +1345,7 @@ async def page_security_os(chat_id: int, client=None):
         f"  {'✅' if ub_ready else '❌'} Userbot      : <code>{ub_st}</code>\n"
         f"  {'✅' if has_mon else '❌'} Bot Pemantau : <code>{mon_st}</code>\n"
         f"  {'✅' if (has_mon and mon_in_group) else '❌'} Di Grup      : "
-        f"<code>{'✅ Sudah jadi anggota' if (has_mon and mon_in_group) else '❌ Belum join — tambahkan manual'}</code>\n\n"
+        f"<code>{'✅ Sudah jadi anggota' if (has_mon and mon_in_group) else '❌ Belum join — proses otomatis berjalan setelah token dipasang'}</code>\n\n"
         f"<b>🔐 Security OS  : <code>{flag}</code></b>\n\n"
         f"<b>⚙️ CARA KERJA SINGKAT:</b>\n"
         f"◈ Tiap grup punya bot pemantau <b>masing-masing</b>.\n"
@@ -1393,7 +1465,7 @@ async def page_newscore(chat_id: int):
         kuota_line = f"   👑 Kuota Admin: <code>Top {max_admins}</code> teratas"
 
     text = (
-        f"🏆 <b>NEWSCORE — Skor Keaktifan & Admin Otomatis</b>\n"
+        f"🏆 <b>NEWSCORE — Skor Keaktifan &amp; Admin Otomatis</b>\n"
         f"<code>Grup: {chat_id}</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"{icon(enabled)} <b>Status NewsCore:</b>  <code>{flag(enabled)}</code>\n\n"

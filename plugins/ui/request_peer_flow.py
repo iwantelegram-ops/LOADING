@@ -28,7 +28,7 @@ _PERJANJIAN_TEXT = (
 
     "Sebelum memasang bot ini ke grup Anda, harap baca dan pahami ketentuan berikut:\n\n"
 
-    "🔐 <b>Keamanan & Privasi Data</b>\n"
+    "🔐 <b>Keamanan &amp; Privasi Data</b>\n"
     "Seluruh data grup — termasuk pesan yang terdeteksi sebagai spam, "
     "konfigurasi filter, dan aktivitas anggota — <b>hanya digunakan untuk "
     "keperluan perlindungan grup Anda</b>. Data tidak dijual, tidak dibagikan, "

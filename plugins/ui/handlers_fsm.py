@@ -124,8 +124,16 @@ def _truncate_to_utf16_limit(s: str, limit: int) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 #  Tangkap semua teks di DM (non-command) → routing ke FSM aktif
 # ─────────────────────────────────────────────────────────────────────────────
-@Client.on_message(filters.private & filters.text & ~filters.command(["start", "batal", "antigcast"]))
+@Client.on_message(filters.private & filters.text & ~filters.regex(r"^/"))
 async def handle_fsm_input(client, message: Message):
+    # FIX: sebelumnya cuma exclude /start, /batal, /antigcast — semua command
+    # owner lain (/reset, /list, /cekstickerpack, /cekreport, /openstikerpack,
+    # dll) ikut ke-match filter ini, dan karena sama-sama group=0 dengan
+    # handler command tsb, Pyrogram cuma jalanin SATU handler pertama yang
+    # match per group lalu stop — command lain jadi diam total tanpa log.
+    # Sekarang exclude SEMUA pesan yang diawali "/" (command apa pun),
+    # bukan cuma 3 nama spesifik, supaya command baru di masa depan otomatis
+    # aman tanpa perlu ditambah manual ke whitelist exclude ini.
     user_id = message.from_user.id
 
     regex_state = pending_regex_state.get(user_id)
